@@ -12,6 +12,8 @@ type Player = {
   moving: boolean;
   step: number;
   area: Area;
+  skinTone: SkinTone;
+  hairStyle: HairStyle;
   name: string;
   lastSeen?: number | object;
 };
@@ -19,7 +21,9 @@ type Player = {
 type PlayerRecord = Omit<Player, "id">;
 type PlayerSnapshot = Partial<PlayerRecord>;
 
-type Area = "forest" | "home";
+type Area = "forest" | "home" | "shop";
+type SkinTone = "#f5f1e8" | "#d8ad7c" | "#9a6848" | "#5f3a28";
+type HairStyle = "none" | "tuft" | "bob" | "cap";
 
 type KickedRecord = {
   kickedAt?: number | object;
@@ -93,6 +97,19 @@ app.innerHTML = `
       <ul id="players-list"></ul>
     </aside>
 
+    <aside class="customize-panel is-hidden" id="customize-panel">
+      <h2>Shop</h2>
+      <p>Customize your character.</p>
+      <div class="customize-panel__group">
+        <span>Skin tone</span>
+        <div id="skin-options"></div>
+      </div>
+      <div class="customize-panel__group">
+        <span>Hair</span>
+        <div id="hair-options"></div>
+      </div>
+    </aside>
+
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
 `;
@@ -112,6 +129,9 @@ const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
+const customizePanelElement = document.querySelector<HTMLElement>("#customize-panel");
+const skinOptionsElement = document.querySelector<HTMLDivElement>("#skin-options");
+const hairOptionsElement = document.querySelector<HTMLDivElement>("#hair-options");
 
 if (
   !canvasElement ||
@@ -128,7 +148,10 @@ if (
   !gameHudElement ||
   !lobbyPanelElement ||
   !playerCountElement ||
-  !playersListElement
+  !playersListElement ||
+  !customizePanelElement ||
+  !skinOptionsElement ||
+  !hairOptionsElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -154,6 +177,9 @@ const gameHud = gameHudElement;
 const lobbyPanel = lobbyPanelElement;
 const playerCount = playerCountElement;
 const playersList = playersListElement;
+const customizePanel = customizePanelElement;
+const skinOptions = skinOptionsElement;
+const hairOptions = hairOptionsElement;
 const context = renderingContext;
 
 const world = {
@@ -167,9 +193,17 @@ const DEVTOOLS_PASSWORD = "0310";
 const DEFAULT_FACING = { x: 0, y: 1 };
 const FOREST_AREA: Area = "forest";
 const HOME_AREA: Area = "home";
+const SHOP_AREA: Area = "shop";
 const TRANSITION_PADDING = 24;
 const REMOTE_INTERPOLATION_SPEED = 12;
 const SYNC_INTERVAL_MS = 90;
+const TILE_SIZE = 40;
+const SHOP_DOOR_START_TILE = 6;
+const SHOP_DOOR_END_TILE = 7;
+const SKIN_TONES: SkinTone[] = ["#f5f1e8", "#d8ad7c", "#9a6848", "#5f3a28"];
+const HAIR_STYLES: HairStyle[] = ["none", "tuft", "bob", "cap"];
+const DEFAULT_SKIN_TONE: SkinTone = SKIN_TONES[0];
+const DEFAULT_HAIR_STYLE: HairStyle = "none";
 const keys = new Set<string>();
 const players = new Map<string, Player>();
 const renderedPlayers = new Map<string, Player>();
@@ -213,7 +247,19 @@ function normalizeFacing(player: Player) {
 }
 
 function normalizeArea(area: PlayerSnapshot["area"]): Area {
-  return area === HOME_AREA ? HOME_AREA : FOREST_AREA;
+  if (area === HOME_AREA || area === SHOP_AREA) {
+    return area;
+  }
+
+  return FOREST_AREA;
+}
+
+function normalizeSkinTone(skinTone: PlayerSnapshot["skinTone"]): SkinTone {
+  return SKIN_TONES.includes(skinTone as SkinTone) ? (skinTone as SkinTone) : DEFAULT_SKIN_TONE;
+}
+
+function normalizeHairStyle(hairStyle: PlayerSnapshot["hairStyle"]): HairStyle {
+  return HAIR_STYLES.includes(hairStyle as HairStyle) ? (hairStyle as HairStyle) : DEFAULT_HAIR_STYLE;
 }
 
 function currentArea(): Area {
@@ -230,6 +276,8 @@ function makePlayer(userId: string, name: string): Player {
     area: FOREST_AREA,
     moving: false,
     step: 0,
+    skinTone: DEFAULT_SKIN_TONE,
+    hairStyle: DEFAULT_HAIR_STYLE,
     name
   };
 }
@@ -287,6 +335,10 @@ function showGame() {
   gameHud.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
   canvas.classList.remove("is-hidden");
+}
+
+function updateCustomizePanel() {
+  customizePanel.classList.toggle("is-hidden", currentArea() !== SHOP_AREA);
 }
 
 function renderPlayersList() {
@@ -394,6 +446,8 @@ async function syncLocalPlayer() {
     x: Math.round(localPlayer.x),
     y: Math.round(localPlayer.y),
     area: localPlayer.area,
+    skinTone: localPlayer.skinTone,
+    hairStyle: localPlayer.hairStyle,
     facingX: localPlayer.facingX,
     facingY: localPlayer.facingY,
     moving: localPlayer.moving,
@@ -436,6 +490,10 @@ function updateLocalPlayer(deltaSeconds: number) {
   localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
   localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
 
+  const doorStartX = SHOP_DOOR_START_TILE * TILE_SIZE;
+  const doorEndX = (SHOP_DOOR_END_TILE + 1) * TILE_SIZE;
+  const isOnShopDoor = localPlayer.x >= doorStartX && localPlayer.x <= doorEndX;
+
   if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
     localPlayer.area = HOME_AREA;
     localPlayer.x = world.width - world.playerRadius - TRANSITION_PADDING;
@@ -443,6 +501,14 @@ function updateLocalPlayer(deltaSeconds: number) {
     localPlayer.facingX = -1;
     localPlayer.facingY = 0;
     setStatus("Entered home", "online");
+  } else if (localPlayer.area === HOME_AREA && localPlayer.y <= world.playerRadius && isOnShopDoor) {
+    localPlayer.area = SHOP_AREA;
+    localPlayer.x = (doorStartX + doorEndX) / 2;
+    localPlayer.y = world.height - world.playerRadius - TRANSITION_PADDING;
+    localPlayer.facingX = 0;
+    localPlayer.facingY = -1;
+    renderCustomizationOptions();
+    setStatus("Entered shop", "online");
   } else if (localPlayer.area === HOME_AREA && localPlayer.x >= world.width - world.playerRadius) {
     localPlayer.area = FOREST_AREA;
     localPlayer.x = world.playerRadius + TRANSITION_PADDING;
@@ -450,6 +516,13 @@ function updateLocalPlayer(deltaSeconds: number) {
     localPlayer.facingX = 1;
     localPlayer.facingY = 0;
     setStatus("Entered forest", "online");
+  } else if (localPlayer.area === SHOP_AREA && localPlayer.y >= world.height - world.playerRadius) {
+    localPlayer.area = HOME_AREA;
+    localPlayer.x = (doorStartX + doorEndX) / 2;
+    localPlayer.y = world.playerRadius + TRANSITION_PADDING;
+    localPlayer.facingX = 0;
+    localPlayer.facingY = 1;
+    setStatus("Returned home", "online");
   }
 }
 
@@ -553,6 +626,55 @@ function drawHome() {
   context.fillText("Forest exit", world.width - 36, world.height / 2 - 12);
 }
 
+function drawShop() {
+  context.fillStyle = "#4a3b54";
+  context.fillRect(0, 0, world.width, world.height);
+
+  context.strokeStyle = "rgba(231, 207, 255, 0.18)";
+  context.lineWidth = 2;
+  for (let x = 0; x <= world.width; x += TILE_SIZE) {
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, world.height);
+    context.stroke();
+  }
+
+  for (let y = 0; y <= world.height; y += TILE_SIZE) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(world.width, y);
+    context.stroke();
+  }
+
+  context.fillStyle = "#2f2637";
+  context.fillRect(0, world.height - 28, world.width, 28);
+  context.fillStyle = "#d8c9aa";
+  context.font = "16px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.fillText("Walk down to return home", world.width / 2, world.height - 42);
+  context.fillText("Character Shop", world.width / 2, 54);
+}
+
+function drawHair(player: Player) {
+  context.fillStyle = "#2b1b12";
+
+  if (player.hairStyle === "tuft") {
+    context.beginPath();
+    context.arc(player.x - 4, player.y - 13, 6, Math.PI, Math.PI * 2);
+    context.arc(player.x + 4, player.y - 13, 6, Math.PI, Math.PI * 2);
+    context.fill();
+  } else if (player.hairStyle === "bob") {
+    context.beginPath();
+    context.arc(player.x, player.y - 7, 14, Math.PI, Math.PI * 2);
+    context.fill();
+  } else if (player.hairStyle === "cap") {
+    context.fillStyle = "#5b7f43";
+    context.beginPath();
+    context.arc(player.x, player.y - 8, 13, Math.PI, Math.PI * 2);
+    context.fill();
+  }
+}
+
 function drawPlayer(player: Player, isLocal: boolean) {
   const facing = normalizeFacing(player);
   const eyeOffsetX = facing.x * 5;
@@ -560,27 +682,28 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const perpendicularX = -facing.y * 4;
   const perpendicularY = facing.x * 4;
   const handSwing = player.moving ? Math.sin(player.step) * 4 : 0;
-  const leftHandX = player.x + perpendicularX * 3 + facing.x * handSwing;
-  const leftHandY = player.y + perpendicularY * 3 + facing.y * handSwing;
-  const rightHandX = player.x - perpendicularX * 3 - facing.x * handSwing;
-  const rightHandY = player.y - perpendicularY * 3 - facing.y * handSwing;
+  const leftHandX = player.x + perpendicularX * 4 + facing.x * handSwing;
+  const leftHandY = player.y + perpendicularY * 4 + facing.y * handSwing;
+  const rightHandX = player.x - perpendicularX * 4 - facing.x * handSwing;
+  const rightHandY = player.y - perpendicularY * 4 - facing.y * handSwing;
 
-  context.fillStyle = "#f5f1e8";
+  context.fillStyle = player.skinTone;
   context.strokeStyle = "#7b6f58";
   context.lineWidth = 2;
   context.beginPath();
-  context.arc(leftHandX, leftHandY, 5, 0, Math.PI * 2);
-  context.arc(rightHandX, rightHandY, 5, 0, Math.PI * 2);
+  context.arc(leftHandX, leftHandY, 5.5, 0, Math.PI * 2);
+  context.arc(rightHandX, rightHandY, 5.5, 0, Math.PI * 2);
   context.fill();
   context.stroke();
 
   context.beginPath();
-  context.fillStyle = "#f5f1e8";
+  context.fillStyle = player.skinTone;
   context.arc(player.x, player.y, world.playerRadius, 0, Math.PI * 2);
   context.fill();
   context.strokeStyle = isLocal ? "#2f4a2d" : "#7b6f58";
   context.lineWidth = isLocal ? 4 : 2;
   context.stroke();
+  drawHair(player);
 
   context.fillStyle = "#11130f";
   context.beginPath();
@@ -596,7 +719,11 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
-  if (localPlayer?.area === HOME_AREA) {
+  updateCustomizePanel();
+
+  if (localPlayer?.area === SHOP_AREA) {
+    drawShop();
+  } else if (localPlayer?.area === HOME_AREA) {
     drawHome();
   } else {
     drawForest();
@@ -645,6 +772,8 @@ function subscribeToLobby() {
             facingY: player.facingY ?? DEFAULT_FACING.y,
             moving: player.moving ?? false,
             step: player.step ?? 0,
+            skinTone: normalizeSkinTone(player.skinTone),
+            hairStyle: normalizeHairStyle(player.hairStyle),
             name: player.name ?? `Player ${id.slice(0, 5)}`
           });
         }
@@ -719,6 +848,51 @@ async function clearKick(playerId: string, playerName: string) {
   devtoolsMessage.textContent = `Clearing kick for ${playerName}...`;
   await remove(kickedPlayerRef(playerId));
   devtoolsMessage.textContent = `${playerName} can rejoin.`;
+}
+
+function renderCustomizationOptions() {
+  skinOptions.innerHTML = "";
+  hairOptions.innerHTML = "";
+
+  for (const skinTone of SKIN_TONES) {
+    const button = document.createElement("button");
+    button.className = "customize-option customize-option--skin";
+    button.type = "button";
+    button.style.background = skinTone;
+    button.setAttribute("aria-label", `Skin tone ${skinTone}`);
+    button.classList.toggle("is-selected", localPlayer?.skinTone === skinTone);
+    button.addEventListener("click", () => {
+      void applyCustomization("skin", skinTone);
+    });
+    skinOptions.append(button);
+  }
+
+  for (const hairStyle of HAIR_STYLES) {
+    const button = document.createElement("button");
+    button.className = "customize-option";
+    button.type = "button";
+    button.textContent = hairStyle;
+    button.classList.toggle("is-selected", localPlayer?.hairStyle === hairStyle);
+    button.addEventListener("click", () => {
+      void applyCustomization("hair", hairStyle);
+    });
+    hairOptions.append(button);
+  }
+}
+
+async function applyCustomization(kind: "skin" | "hair", value: SkinTone | HairStyle) {
+  if (!localPlayer) {
+    return;
+  }
+
+  if (kind === "skin") {
+    localPlayer.skinTone = normalizeSkinTone(value as SkinTone);
+  } else {
+    localPlayer.hairStyle = normalizeHairStyle(value as HairStyle);
+  }
+
+  renderCustomizationOptions();
+  await syncLocalPlayer();
 }
 
 async function joinLobby(playerName: string) {
