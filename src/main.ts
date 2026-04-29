@@ -1,4 +1,5 @@
-import { onValue, ref, remove, serverTimestamp, set } from "firebase/database";
+import { onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
+import type { Unsubscribe } from "firebase/database";
 import { database, signInPlayer } from "./firebase";
 import "./styles.css";
 
@@ -21,22 +22,66 @@ if (!app) {
 
 app.innerHTML = `
   <main class="shell">
-    <section class="hud">
+    <section class="menu" id="join-menu">
+      <h1>WoopWoop</h1>
+      <p>Enter a name, join the lobby, then move with <strong>WASD</strong>.</p>
+      <form class="join-form" id="join-form">
+        <label for="player-name">Player name</label>
+        <input
+          id="player-name"
+          maxlength="18"
+          minlength="1"
+          name="playerName"
+          placeholder="Your name"
+          required
+          autocomplete="nickname"
+        />
+        <button type="submit">Join Lobby</button>
+      </form>
+      <p class="menu-error" id="menu-error" role="alert"></p>
+    </section>
+
+    <section class="hud is-hidden" id="game-hud">
       <div>
         <h1>WoopWoop</h1>
         <p>Move with <strong>WASD</strong>. Open another tab to see multiplayer sync.</p>
       </div>
       <div class="status" id="status">Connecting...</div>
     </section>
-    <canvas id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
+
+    <aside class="lobby-panel is-hidden" id="lobby-panel">
+      <h2>Connected players <span id="player-count">0</span></h2>
+      <ul id="players-list"></ul>
+    </aside>
+
+    <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
 `;
 
 const canvasElement = document.querySelector<HTMLCanvasElement>("#game");
 const statusElement = document.querySelector<HTMLDivElement>("#status");
+const joinMenu = document.querySelector<HTMLElement>("#join-menu");
+const joinForm = document.querySelector<HTMLFormElement>("#join-form");
+const nameInput = document.querySelector<HTMLInputElement>("#player-name");
+const menuError = document.querySelector<HTMLParagraphElement>("#menu-error");
+const gameHud = document.querySelector<HTMLElement>("#game-hud");
+const lobbyPanel = document.querySelector<HTMLElement>("#lobby-panel");
+const playerCount = document.querySelector<HTMLSpanElement>("#player-count");
+const playersList = document.querySelector<HTMLUListElement>("#players-list");
 
-if (!canvasElement || !statusElement) {
-  throw new Error("Missing game canvas or status element");
+if (
+  !canvasElement ||
+  !statusElement ||
+  !joinMenu ||
+  !joinForm ||
+  !nameInput ||
+  !menuError ||
+  !gameHud ||
+  !lobbyPanel ||
+  !playerCount ||
+  !playersList
+) {
+  throw new Error("Missing required game UI element");
 }
 
 const renderingContext = canvasElement.getContext("2d");
@@ -61,6 +106,8 @@ const players = new Map<string, Player>();
 let localPlayer: Player | null = null;
 let lastFrameAt = performance.now();
 let lastSyncAt = 0;
+let playersUnsubscribe: Unsubscribe | null = null;
+let animationStarted = false;
 
 window.addEventListener("keydown", (event) => {
   if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
@@ -77,18 +124,63 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function makePlayer(userId: string): Player {
+function makePlayer(userId: string, name: string): Player {
   return {
     id: userId,
     x: world.width / 2 + Math.random() * 120 - 60,
     y: world.height / 2 + Math.random() * 120 - 60,
     color: `hsl(${Math.floor(Math.random() * 360)} 75% 58%)`,
-    name: `Player ${userId.slice(0, 5)}`
+    name
   };
 }
 
 function playerRef(playerId: string) {
   return ref(database, `rooms/lobby/players/${playerId}`);
+}
+
+function playersRef() {
+  return ref(database, "rooms/lobby/players");
+}
+
+function setStatus(message: string, state: "online" | "offline" | "error") {
+  statusEl.textContent = message;
+  statusEl.dataset.state = state;
+}
+
+function showGame() {
+  joinMenu.classList.add("is-hidden");
+  gameHud.classList.remove("is-hidden");
+  lobbyPanel.classList.remove("is-hidden");
+  canvas.classList.remove("is-hidden");
+}
+
+function renderPlayersList() {
+  const orderedPlayers = [...players.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  playerCount.textContent = String(orderedPlayers.length);
+  playersList.innerHTML = "";
+
+  for (const player of orderedPlayers) {
+    const item = document.createElement("li");
+    const swatch = document.createElement("span");
+    const name = document.createElement("span");
+
+    item.className = "player-row";
+    swatch.className = "player-swatch";
+    swatch.style.background = player.color;
+    name.textContent = player.name;
+
+    item.append(swatch, name);
+
+    if (player.id === localPlayer?.id) {
+      const you = document.createElement("span");
+      you.className = "player-you";
+      you.textContent = "you";
+      item.append(you);
+    }
+
+    playersList.append(item);
+  }
 }
 
 async function syncLocalPlayer() {
@@ -186,7 +278,7 @@ function tick(frameAt: number) {
   if (localPlayer && frameAt - lastSyncAt > 50) {
     lastSyncAt = frameAt;
     void syncLocalPlayer().catch((error) => {
-      statusEl.textContent = `Sync failed: ${error.message}`;
+      setStatus(`Sync failed: ${error.message}`, "error");
     });
   }
 
@@ -194,30 +286,42 @@ function tick(frameAt: number) {
   requestAnimationFrame(tick);
 }
 
-async function start() {
+async function joinLobby(playerName: string) {
   const playerId = await signInPlayer();
 
-  localPlayer = makePlayer(playerId);
+  localPlayer = makePlayer(playerId, playerName);
   players.set(localPlayer.id, localPlayer);
-  statusEl.textContent = "Connected";
-  statusEl.dataset.state = "online";
+  renderPlayersList();
+  showGame();
+  setStatus("Connected", "online");
 
   await syncLocalPlayer();
+  await onDisconnect(playerRef(localPlayer.id)).remove();
 
-  onValue(ref(database, "rooms/lobby/players"), (snapshot) => {
-    const records = snapshot.val() as Record<string, PlayerRecord> | null;
-    players.clear();
+  playersUnsubscribe?.();
+  playersUnsubscribe = onValue(
+    playersRef(),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, PlayerRecord> | null;
+      players.clear();
 
-    if (records) {
-      for (const [id, player] of Object.entries(records)) {
-        players.set(id, { id, ...player });
+      if (records) {
+        for (const [id, player] of Object.entries(records)) {
+          players.set(id, { id, ...player });
+        }
       }
-    }
 
-    if (localPlayer) {
-      players.set(localPlayer.id, localPlayer);
+      if (localPlayer && !players.has(localPlayer.id)) {
+        players.set(localPlayer.id, localPlayer);
+      }
+
+      renderPlayersList();
+      setStatus(`Connected: ${players.size} player${players.size === 1 ? "" : "s"}`, "online");
+    },
+    (error) => {
+      setStatus(`Lobby read failed: ${error.message}`, "error");
     }
-  });
+  );
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {
@@ -225,10 +329,30 @@ async function start() {
     }
   });
 
-  requestAnimationFrame(tick);
+  if (!animationStarted) {
+    animationStarted = true;
+    requestAnimationFrame(tick);
+  }
 }
 
-void start().catch((error) => {
-  statusEl.textContent = `Could not start: ${error.message}`;
-  statusEl.dataset.state = "error";
+joinForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const playerName = nameInput.value.trim();
+
+  if (!playerName) {
+    menuError.textContent = "Enter a name before joining.";
+    nameInput.focus();
+    return;
+  }
+
+  menuError.textContent = "";
+  nameInput.disabled = true;
+  joinForm.querySelector("button")?.setAttribute("disabled", "true");
+
+  void joinLobby(playerName).catch((error) => {
+    menuError.textContent = `Could not join lobby: ${error.message}`;
+    nameInput.disabled = false;
+    joinForm.querySelector("button")?.removeAttribute("disabled");
+    setStatus(`Could not join: ${error.message}`, "error");
+  });
 });
