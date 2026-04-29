@@ -337,6 +337,10 @@ function showGame() {
   canvas.classList.remove("is-hidden");
 }
 
+function updateCustomizePanel() {
+  customizePanel.classList.toggle("is-hidden", currentArea() !== SHOP_AREA);
+}
+
 function renderPlayersList() {
   const visiblePlayers = [...players.values()].filter((player) => player.area === currentArea());
   const orderedPlayers = visiblePlayers.sort((a, b) => a.name.localeCompare(b.name));
