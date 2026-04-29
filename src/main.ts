@@ -1,4 +1,4 @@
-import { get, onDisconnect, onValue, push, ref, remove, serverTimestamp, set } from "firebase/database";
+import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { database, signInPlayer } from "./firebase";
 import "./styles.css";
@@ -550,8 +550,10 @@ function nearestHairPickup() {
     return null;
   }
 
+  const player = localPlayer;
+
   return (
-    HAIR_PICKUPS.find((pickup) => Math.hypot(localPlayer.x - pickup.x, localPlayer.y - pickup.y) <= 48) ?? null
+    HAIR_PICKUPS.find((pickup) => Math.hypot(player.x - pickup.x, player.y - pickup.y) <= 48) ?? null
   );
 }
 
