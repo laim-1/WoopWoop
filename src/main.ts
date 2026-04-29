@@ -1,4 +1,4 @@
-import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
+import { get, onDisconnect, onValue, push, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { database, signInPlayer } from "./firebase";
 import "./styles.css";
@@ -23,11 +23,19 @@ type PlayerSnapshot = Partial<PlayerRecord>;
 
 type Area = "forest" | "home" | "shop";
 type SkinTone = "#f5f1e8" | "#d8ad7c" | "#9a6848" | "#5f3a28";
-type HairStyle = "none" | "tuft" | "bob" | "cap";
+type HairStyle = "none" | "tuft" | "bob" | "cap" | "girl";
 
 type KickedRecord = {
   kickedAt?: number | object;
   name?: string;
+};
+
+type ChatMessage = {
+  area?: Area;
+  createdAt?: number | object;
+  name?: string;
+  text?: string;
+  uid?: string;
 };
 
 type RenderState = {
@@ -94,29 +102,22 @@ app.innerHTML = `
 
     <section class="hud is-hidden" id="game-hud">
       <div>
-        <h1>WoopWoop</h1>
-        <p>Move with <strong>WASD</strong>. Open another tab to see multiplayer sync.</p>
+        <h1>Main Plaza</h1>
       </div>
       <div class="status" id="status">Connecting...</div>
     </section>
 
     <aside class="lobby-panel is-hidden" id="lobby-panel">
-      <h2>Connected players <span id="player-count">0</span></h2>
+      <h2>Players <span id="player-count">0</span></h2>
       <ul id="players-list"></ul>
     </aside>
 
-    <aside class="customize-panel is-hidden" id="customize-panel">
-      <h2>Shop</h2>
-      <p>Customize your character.</p>
-      <div class="customize-panel__group">
-        <span>Skin tone</span>
-        <div id="skin-options"></div>
-      </div>
-      <div class="customize-panel__group">
-        <span>Hair</span>
-        <div id="hair-options"></div>
-      </div>
-    </aside>
+    <section class="chat-panel is-hidden" id="chat-panel">
+      <ul id="chat-messages"></ul>
+      <form id="chat-form">
+        <input id="chat-input" maxlength="120" placeholder="Chat..." autocomplete="off" />
+      </form>
+    </section>
 
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
@@ -137,9 +138,10 @@ const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
-const customizePanelElement = document.querySelector<HTMLElement>("#customize-panel");
-const skinOptionsElement = document.querySelector<HTMLDivElement>("#skin-options");
-const hairOptionsElement = document.querySelector<HTMLDivElement>("#hair-options");
+const chatPanelElement = document.querySelector<HTMLElement>("#chat-panel");
+const chatMessagesElement = document.querySelector<HTMLUListElement>("#chat-messages");
+const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
+const chatInputElement = document.querySelector<HTMLInputElement>("#chat-input");
 
 if (
   !canvasElement ||
@@ -157,9 +159,10 @@ if (
   !lobbyPanelElement ||
   !playerCountElement ||
   !playersListElement ||
-  !customizePanelElement ||
-  !skinOptionsElement ||
-  !hairOptionsElement
+  !chatPanelElement ||
+  !chatMessagesElement ||
+  !chatFormElement ||
+  !chatInputElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -185,9 +188,10 @@ const gameHud = gameHudElement;
 const lobbyPanel = lobbyPanelElement;
 const playerCount = playerCountElement;
 const playersList = playersListElement;
-const customizePanel = customizePanelElement;
-const skinOptions = skinOptionsElement;
-const hairOptions = hairOptionsElement;
+const chatPanel = chatPanelElement;
+const chatMessages = chatMessagesElement;
+const chatForm = chatFormElement;
+const chatInput = chatInputElement;
 const context = renderingContext;
 
 const world = {
@@ -211,26 +215,46 @@ const SHOP_DOOR_END_TILE = 7;
 const SHOP_DOOR_X = SHOP_DOOR_START_TILE * TILE_SIZE;
 const SHOP_DOOR_WIDTH = (SHOP_DOOR_END_TILE - SHOP_DOOR_START_TILE + 1) * TILE_SIZE;
 const SKIN_TONES: SkinTone[] = ["#f5f1e8", "#d8ad7c", "#9a6848", "#5f3a28"];
-const HAIR_STYLES: HairStyle[] = ["none", "tuft", "bob", "cap"];
+const HAIR_STYLES: HairStyle[] = ["none", "tuft", "bob", "cap", "girl"];
 const DEFAULT_SKIN_TONE: SkinTone = SKIN_TONES[0];
 const DEFAULT_HAIR_STYLE: HairStyle = "none";
+const CHAT_LIMIT = 20;
+const CHAT_MAX_LENGTH = 120;
+const HAIR_PICKUPS: Array<{ style: HairStyle; x: number; y: number; label: string }> = [
+  { style: "tuft", x: 260, y: 230, label: "Tuft" },
+  { style: "bob", x: 380, y: 230, label: "Bob" },
+  { style: "cap", x: 500, y: 230, label: "Cap" },
+  { style: "girl", x: 620, y: 230, label: "Girl" }
+];
 const keys = new Set<string>();
 const players = new Map<string, Player>();
 const renderedPlayers = new Map<string, Player>();
 const renderStates = new Map<string, RenderState>();
 const kickedPlayerIds = new Set<string>();
+const chatMessagesById = new Map<string, ChatMessage & { id: string }>();
 let localPlayer: Player | null = null;
 let lastFrameAt = performance.now();
 let lastSyncAt = 0;
 let playersUnsubscribe: Unsubscribe | null = null;
 let kickedUnsubscribe: Unsubscribe | null = null;
+let chatUnsubscribe: Unsubscribe | null = null;
 let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
 
 window.addEventListener("keydown", (event) => {
-  if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
+  if (event.target instanceof HTMLInputElement) {
+    return;
+  }
+
+  if (event.code === "Enter" && hasJoinedLobby) {
+    chatInput.focus();
+    event.preventDefault();
+  } else if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
     keys.add(event.code);
+    event.preventDefault();
+  } else if (event.code === "KeyE") {
+    interact();
     event.preventDefault();
   }
 });
@@ -300,6 +324,14 @@ function playersRef() {
   return ref(database, "rooms/lobby/players");
 }
 
+function chatRef() {
+  return ref(database, "rooms/lobby/chat");
+}
+
+function chatMessageRef(messageId: string) {
+  return ref(database, `rooms/lobby/chat/${messageId}`);
+}
+
 function kickedPlayerRef(playerId: string) {
   return ref(database, `rooms/lobby/kicked/${playerId}`);
 }
@@ -344,11 +376,12 @@ function showGame() {
   joinMenu.classList.add("is-hidden");
   gameHud.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
+  chatPanel.classList.remove("is-hidden");
   canvas.classList.remove("is-hidden");
 }
 
-function updateCustomizePanel() {
-  customizePanel.classList.toggle("is-hidden", currentArea() !== SHOP_AREA);
+function updateOverlayPanels() {
+  chatPanel.classList.toggle("is-hidden", !hasJoinedLobby);
 }
 
 function renderPlayersList() {
@@ -447,6 +480,91 @@ function renderPlayersList() {
   }
 }
 
+function renderChatMessages() {
+  const messagesForArea = [...chatMessagesById.values()]
+    .filter((message) => message.area === currentArea())
+    .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0))
+    .slice(-CHAT_LIMIT);
+
+  chatMessages.innerHTML = "";
+
+  for (const message of messagesForArea) {
+    const item = document.createElement("li");
+    const name = document.createElement("strong");
+    const text = document.createElement("span");
+
+    name.textContent = `${message.name ?? "Player"}: `;
+    text.textContent = message.text ?? "";
+    item.append(name, text);
+    chatMessages.append(item);
+  }
+
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function subscribeToChat() {
+  chatUnsubscribe?.();
+  chatUnsubscribe = onValue(
+    chatRef(),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, ChatMessage> | null;
+      chatMessagesById.clear();
+
+      if (records) {
+        for (const [id, message] of Object.entries(records)) {
+          chatMessagesById.set(id, { id, ...message });
+        }
+      }
+
+      renderChatMessages();
+    },
+    (error) => {
+      setStatus(`Chat failed: ${error.message}`, "error");
+    }
+  );
+}
+
+async function sendChatMessage() {
+  if (!localPlayer) {
+    return;
+  }
+
+  const text = chatInput.value.trim().slice(0, CHAT_MAX_LENGTH);
+
+  if (!text) {
+    return;
+  }
+
+  chatInput.value = "";
+  await set(chatMessageRef(`${Date.now()}-${localPlayer.id}`), {
+    area: localPlayer.area,
+    createdAt: serverTimestamp(),
+    name: localPlayer.name,
+    text,
+    uid: localPlayer.id
+  } satisfies ChatMessage);
+}
+
+function nearestHairPickup() {
+  if (!localPlayer || localPlayer.area !== SHOP_AREA) {
+    return null;
+  }
+
+  return (
+    HAIR_PICKUPS.find((pickup) => Math.hypot(localPlayer.x - pickup.x, localPlayer.y - pickup.y) <= 48) ?? null
+  );
+}
+
+function interact() {
+  const pickup = nearestHairPickup();
+
+  if (!pickup) {
+    return;
+  }
+
+  void applyHairStyle(pickup.style);
+}
+
 async function syncLocalPlayer() {
   if (!localPlayer) {
     return;
@@ -500,39 +618,36 @@ function updateLocalPlayer(deltaSeconds: number) {
   localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
   localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
 
-  const doorStartX = SHOP_DOOR_X;
-  const doorEndX = SHOP_DOOR_X + SHOP_DOOR_WIDTH;
-  const isOnShopDoor = localPlayer.x >= doorStartX && localPlayer.x <= doorEndX;
+  const isOnShopDoor = localPlayer.x >= SHOP_DOOR_X && localPlayer.x <= SHOP_DOOR_X + SHOP_DOOR_WIDTH;
 
-  if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
+  if (localPlayer.area === FOREST_AREA && localPlayer.y <= world.playerRadius && isOnShopDoor) {
+    localPlayer.area = SHOP_AREA;
+    localPlayer.x = SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2;
+    localPlayer.y = world.height - world.playerRadius - TRANSITION_PADDING;
+    localPlayer.facingX = 0;
+    localPlayer.facingY = -1;
+    setStatus("Entered shop. Walk up to hair and press E.", "online");
+  } else if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
     localPlayer.area = HOME_AREA;
     localPlayer.x = world.width - world.playerRadius - TRANSITION_PADDING;
     localPlayer.y = world.height / 2;
     localPlayer.facingX = -1;
     localPlayer.facingY = 0;
     setStatus("Entered home", "online");
-  } else if (localPlayer.area === HOME_AREA && localPlayer.y <= world.playerRadius && isOnShopDoor) {
-    localPlayer.area = SHOP_AREA;
-    localPlayer.x = (doorStartX + doorEndX) / 2;
-    localPlayer.y = world.height - world.playerRadius - TRANSITION_PADDING;
-    localPlayer.facingX = 0;
-    localPlayer.facingY = -1;
-    renderCustomizationOptions();
-    setStatus("Entered shop", "online");
   } else if (localPlayer.area === HOME_AREA && localPlayer.x >= world.width - world.playerRadius) {
     localPlayer.area = FOREST_AREA;
     localPlayer.x = world.playerRadius + TRANSITION_PADDING;
     localPlayer.y = world.height / 2;
     localPlayer.facingX = 1;
     localPlayer.facingY = 0;
-    setStatus("Entered forest", "online");
+    setStatus("Entered main plaza", "online");
   } else if (localPlayer.area === SHOP_AREA && localPlayer.y >= world.height - world.playerRadius) {
-    localPlayer.area = HOME_AREA;
-    localPlayer.x = (doorStartX + doorEndX) / 2;
+    localPlayer.area = FOREST_AREA;
+    localPlayer.x = SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2;
     localPlayer.y = world.playerRadius + TRANSITION_PADDING;
     localPlayer.facingX = 0;
     localPlayer.facingY = 1;
-    setStatus("Returned home", "online");
+    setStatus("Returned to main plaza", "online");
   }
 }
 
@@ -603,10 +718,20 @@ function drawForest() {
 
   context.fillStyle = "rgba(18, 31, 16, 0.72)";
   context.fillRect(0, 0, 18, world.height);
+  context.fillStyle = "#4a3b54";
+  context.fillRect(SHOP_DOOR_X, 0, SHOP_DOOR_WIDTH, 34);
+  context.fillStyle = "#b998d6";
+  context.fillRect(SHOP_DOOR_X + 6, 8, SHOP_DOOR_WIDTH - 12, 20);
+  context.strokeStyle = "#f2ead8";
+  context.lineWidth = 2;
+  context.strokeRect(SHOP_DOOR_X, 0, TILE_SIZE, TILE_SIZE);
+  context.strokeRect(SHOP_DOOR_X + TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
   context.fillStyle = "#d8c9aa";
   context.font = "16px system-ui, sans-serif";
   context.textAlign = "left";
   context.fillText("Home entrance", 28, world.height / 2 - 12);
+  context.textAlign = "center";
+  context.fillText("Shop", SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2, 54);
 }
 
 function drawHome() {
@@ -627,19 +752,6 @@ function drawHome() {
   context.fillRect(0, world.height - 28, world.width, 28);
   context.fillRect(0, 0, 28, world.height);
   context.fillRect(world.width - 28, 0, 28, world.height);
-
-  context.fillStyle = "#4a3b54";
-  context.fillRect(SHOP_DOOR_X, 0, SHOP_DOOR_WIDTH, 30);
-  context.fillStyle = "#b998d6";
-  context.fillRect(SHOP_DOOR_X + 6, 8, SHOP_DOOR_WIDTH - 12, 18);
-  context.strokeStyle = "#f2ead8";
-  context.lineWidth = 2;
-  context.strokeRect(SHOP_DOOR_X, 0, TILE_SIZE, TILE_SIZE);
-  context.strokeRect(SHOP_DOOR_X + TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
-  context.fillStyle = "#f2ead8";
-  context.font = "13px system-ui, sans-serif";
-  context.textAlign = "center";
-  context.fillText("Shop", SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2, 48);
 
   context.fillStyle = "#80613a";
   context.fillRect(96, 96, 150, 86);
@@ -676,6 +788,49 @@ function drawShop() {
   context.textAlign = "center";
   context.fillText("Walk down to return home", world.width / 2, world.height - 42);
   context.fillText("Character Shop", world.width / 2, 54);
+
+  for (const pickup of HAIR_PICKUPS) {
+    context.fillStyle = "#2f2637";
+    context.fillRect(pickup.x - 34, pickup.y - 20, 68, 52);
+    context.strokeStyle = "#d8c9aa";
+    context.lineWidth = 2;
+    context.strokeRect(pickup.x - 34, pickup.y - 20, 68, 52);
+    context.fillStyle = "#f2ead8";
+    context.font = "13px system-ui, sans-serif";
+    context.fillText(pickup.label, pickup.x, pickup.y + 48);
+
+    drawHairPreview(pickup.style, pickup.x, pickup.y + 6);
+  }
+}
+
+function drawHairPreview(hairStyle: HairStyle, x: number, y: number) {
+  context.fillStyle = "#f5f1e8";
+  context.beginPath();
+  context.arc(x, y, 13, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#2b1b12";
+
+  if (hairStyle === "tuft") {
+    context.beginPath();
+    context.arc(x - 4, y - 10, 5, Math.PI, Math.PI * 2);
+    context.arc(x + 4, y - 10, 5, Math.PI, Math.PI * 2);
+    context.fill();
+  } else if (hairStyle === "bob") {
+    context.beginPath();
+    context.arc(x, y - 5, 12, Math.PI, Math.PI * 2);
+    context.fill();
+  } else if (hairStyle === "cap") {
+    context.fillStyle = "#5b7f43";
+    context.beginPath();
+    context.arc(x, y - 6, 12, Math.PI, Math.PI * 2);
+    context.fill();
+  } else if (hairStyle === "girl") {
+    context.beginPath();
+    context.arc(x, y - 6, 13, Math.PI, Math.PI * 2);
+    context.arc(x - 9, y + 4, 5, 0, Math.PI * 2);
+    context.arc(x + 9, y + 4, 5, 0, Math.PI * 2);
+    context.fill();
+  }
 }
 
 function drawHair(player: Player) {
@@ -742,7 +897,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
-  updateCustomizePanel();
+  updateOverlayPanels();
 
   if (localPlayer?.area === SHOP_AREA) {
     drawShop();
@@ -873,48 +1028,13 @@ async function clearKick(playerId: string, playerName: string) {
   devtoolsMessage.textContent = `${playerName} can rejoin.`;
 }
 
-function renderCustomizationOptions() {
-  skinOptions.innerHTML = "";
-  hairOptions.innerHTML = "";
-
-  for (const skinTone of SKIN_TONES) {
-    const button = document.createElement("button");
-    button.className = "customize-option customize-option--skin";
-    button.type = "button";
-    button.style.background = skinTone;
-    button.setAttribute("aria-label", `Skin tone ${skinTone}`);
-    button.classList.toggle("is-selected", localPlayer?.skinTone === skinTone);
-    button.addEventListener("click", () => {
-      void applyCustomization("skin", skinTone);
-    });
-    skinOptions.append(button);
-  }
-
-  for (const hairStyle of HAIR_STYLES) {
-    const button = document.createElement("button");
-    button.className = "customize-option";
-    button.type = "button";
-    button.textContent = hairStyle;
-    button.classList.toggle("is-selected", localPlayer?.hairStyle === hairStyle);
-    button.addEventListener("click", () => {
-      void applyCustomization("hair", hairStyle);
-    });
-    hairOptions.append(button);
-  }
-}
-
-async function applyCustomization(kind: "skin" | "hair", value: SkinTone | HairStyle) {
+async function applyHairStyle(hairStyle: HairStyle) {
   if (!localPlayer) {
     return;
   }
 
-  if (kind === "skin") {
-    localPlayer.skinTone = normalizeSkinTone(value as SkinTone);
-  } else {
-    localPlayer.hairStyle = normalizeHairStyle(value as HairStyle);
-  }
-
-  renderCustomizationOptions();
+  localPlayer.hairStyle = hairStyle;
+  setStatus(`Equipped ${hairStyle} hair`, "online");
   await syncLocalPlayer();
 }
 
@@ -938,6 +1058,7 @@ async function joinLobby(playerName: string) {
   await onDisconnect(playerRef(localPlayer.id)).remove();
   subscribeToLobby();
   subscribeToKickedPlayers();
+  subscribeToChat();
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {
@@ -973,6 +1094,11 @@ devtoolsForm.addEventListener("submit", (event) => {
     .catch((error) => {
       devtoolsMessage.textContent = `Could not unlock devtools: ${error.message}`;
     });
+});
+
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void sendChatMessage();
 });
 
 joinForm.addEventListener("submit", (event) => {

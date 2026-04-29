@@ -47,6 +47,11 @@ For early local testing only, you can use permissive database rules:
           "$uid": {
             ".write": "auth != null"
           }
+        },
+        "chat": {
+          "$messageId": {
+            ".write": "auth != null"
+          }
         }
       }
     }
