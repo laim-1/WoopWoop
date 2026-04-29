@@ -179,6 +179,19 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function normalizeFacing(player: Player) {
+  const length = Math.hypot(player.facingX, player.facingY);
+
+  if (length === 0) {
+    return DEFAULT_FACING;
+  }
+
+  return {
+    x: player.facingX / length,
+    y: player.facingY / length
+  };
+}
+
 function makePlayer(userId: string, name: string): Player {
   return {
     id: userId,
