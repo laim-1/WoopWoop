@@ -64,3 +64,31 @@ its player to `rooms/lobby/players/{uid}`.
 - `npm run dev` - start the Vite dev server
 - `npm run build` - type-check and build production assets
 - `npm run preview` - preview the production build
+
+## Deploy to GitHub Pages
+
+This repo includes a GitHub Actions workflow that builds the Vite app and
+publishes the `dist` folder to GitHub Pages.
+
+Before the deploy works, add these repository secrets in GitHub:
+
+1. Go to **Settings** > **Secrets and variables** > **Actions**.
+2. Add each Firebase value as a repository secret:
+   - `VITE_FIREBASE_API_KEY`
+   - `VITE_FIREBASE_AUTH_DOMAIN`
+   - `VITE_FIREBASE_DATABASE_URL`
+   - `VITE_FIREBASE_PROJECT_ID`
+   - `VITE_FIREBASE_STORAGE_BUCKET`
+   - `VITE_FIREBASE_MESSAGING_SENDER_ID`
+   - `VITE_FIREBASE_APP_ID`
+3. Go to **Settings** > **Pages**.
+4. Set **Source** to **GitHub Actions**.
+5. In Firebase Console, go to **Authentication** > **Settings** > **Authorized
+   domains** and add `laim-1.github.io` if it is not already listed.
+
+After those settings are saved, every push to `main` deploys the game. The site
+URL will look like:
+
+```text
+https://laim-1.github.io/WoopWoop/
+```
