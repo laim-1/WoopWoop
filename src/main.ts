@@ -219,9 +219,22 @@ function kickedPlayersRef() {
   return ref(database, "rooms/lobby/kicked");
 }
 
-async function loadKickedPlayers() {
-  const snapshot = await get(kickedPlayersRef());
-  const records = snapshot.val() as Record<string, KickedRecord> | null;
+async function loadKickedPlayers(required = false) {
+  let records: Record<string, KickedRecord> | null = null;
+
+  try {
+    const snapshot = await get(kickedPlayersRef());
+    records = snapshot.val() as Record<string, KickedRecord> | null;
+  } catch (error) {
+    if (required) {
+      throw error;
+    }
+
+    kickedPlayerIds.clear();
+    renderPlayersList();
+    return;
+  }
+
   kickedPlayerIds.clear();
 
   if (records) {
@@ -523,6 +536,10 @@ function subscribeToKickedPlayers() {
       if (devtoolsUnlocked) {
         devtoolsMessage.textContent = `Could not read kicks: ${error.message}`;
       }
+
+      if (hasJoinedLobby) {
+        setStatus("Connected. Kicks need updated Firebase rules.", "online");
+      }
     }
   );
 }
@@ -590,7 +607,7 @@ devtoolsForm.addEventListener("submit", (event) => {
 
   void signInPlayer()
     .then(async () => {
-      await loadKickedPlayers();
+      await loadKickedPlayers(true);
       subscribeToLobby();
       subscribeToKickedPlayers();
     })
