@@ -32,13 +32,22 @@ app.innerHTML = `
   </main>
 `;
 
-const canvas = document.querySelector<HTMLCanvasElement>("#game");
-const statusEl = document.querySelector<HTMLDivElement>("#status");
-const context = canvas?.getContext("2d");
+const canvasElement = document.querySelector<HTMLCanvasElement>("#game");
+const statusElement = document.querySelector<HTMLDivElement>("#status");
 
-if (!canvas || !context || !statusEl) {
+if (!canvasElement || !statusElement) {
   throw new Error("Missing game canvas or status element");
 }
+
+const renderingContext = canvasElement.getContext("2d");
+
+if (!renderingContext) {
+  throw new Error("Could not initialize 2D canvas context");
+}
+
+const canvas = canvasElement;
+const statusEl = statusElement;
+const context = renderingContext;
 
 const world = {
   width: canvas.width,
