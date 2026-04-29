@@ -43,10 +43,18 @@ if (!app) {
   throw new Error("Missing #app element");
 }
 
+const titleLogoSrc = `${import.meta.env.BASE_URL}assets/branding/title-logo.png`;
+
 app.innerHTML = `
   <main class="shell">
     <section class="menu" id="join-menu">
-      <h1>WoopWoop</h1>
+      <img
+        class="title-logo"
+        src="${titleLogoSrc}"
+        alt="WoopWoop"
+        onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
+      />
+      <h1 class="title-fallback" hidden>WoopWoop</h1>
       <p>Enter a name, join the lobby, then move with <strong>WASD</strong>.</p>
       <form class="join-form" id="join-form">
         <label for="player-name">Player name</label>
@@ -200,6 +208,8 @@ const SYNC_INTERVAL_MS = 90;
 const TILE_SIZE = 40;
 const SHOP_DOOR_START_TILE = 6;
 const SHOP_DOOR_END_TILE = 7;
+const SHOP_DOOR_X = SHOP_DOOR_START_TILE * TILE_SIZE;
+const SHOP_DOOR_WIDTH = (SHOP_DOOR_END_TILE - SHOP_DOOR_START_TILE + 1) * TILE_SIZE;
 const SKIN_TONES: SkinTone[] = ["#f5f1e8", "#d8ad7c", "#9a6848", "#5f3a28"];
 const HAIR_STYLES: HairStyle[] = ["none", "tuft", "bob", "cap"];
 const DEFAULT_SKIN_TONE: SkinTone = SKIN_TONES[0];
@@ -490,8 +500,8 @@ function updateLocalPlayer(deltaSeconds: number) {
   localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
   localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
 
-  const doorStartX = SHOP_DOOR_START_TILE * TILE_SIZE;
-  const doorEndX = (SHOP_DOOR_END_TILE + 1) * TILE_SIZE;
+  const doorStartX = SHOP_DOOR_X;
+  const doorEndX = SHOP_DOOR_X + SHOP_DOOR_WIDTH;
   const isOnShopDoor = localPlayer.x >= doorStartX && localPlayer.x <= doorEndX;
 
   if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
@@ -617,6 +627,19 @@ function drawHome() {
   context.fillRect(0, world.height - 28, world.width, 28);
   context.fillRect(0, 0, 28, world.height);
   context.fillRect(world.width - 28, 0, 28, world.height);
+
+  context.fillStyle = "#4a3b54";
+  context.fillRect(SHOP_DOOR_X, 0, SHOP_DOOR_WIDTH, 30);
+  context.fillStyle = "#b998d6";
+  context.fillRect(SHOP_DOOR_X + 6, 8, SHOP_DOOR_WIDTH - 12, 18);
+  context.strokeStyle = "#f2ead8";
+  context.lineWidth = 2;
+  context.strokeRect(SHOP_DOOR_X, 0, TILE_SIZE, TILE_SIZE);
+  context.strokeRect(SHOP_DOOR_X + TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
+  context.fillStyle = "#f2ead8";
+  context.font = "13px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.fillText("Shop", SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2, 48);
 
   context.fillStyle = "#80613a";
   context.fillRect(96, 96, 150, 86);
