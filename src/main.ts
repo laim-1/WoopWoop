@@ -20,6 +20,13 @@ type KickedRecord = {
   name?: string;
 };
 
+type RenderState = {
+  x: number;
+  y: number;
+  facingX: number;
+  facingY: number;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -152,8 +159,12 @@ const world = {
 
 const DEVTOOLS_PASSWORD = "0310";
 const DEFAULT_FACING = { x: 0, y: 1 };
+const REMOTE_INTERPOLATION_SPEED = 12;
+const SYNC_INTERVAL_MS = 90;
 const keys = new Set<string>();
 const players = new Map<string, Player>();
+const renderedPlayers = new Map<string, Player>();
+const renderStates = new Map<string, RenderState>();
 const kickedPlayerIds = new Set<string>();
 let localPlayer: Player | null = null;
 let lastFrameAt = performance.now();
@@ -200,6 +211,16 @@ function makePlayer(userId: string, name: string): Player {
     facingX: DEFAULT_FACING.x,
     facingY: DEFAULT_FACING.y,
     name
+  };
+}
+
+function makeRenderablePlayer(player: Player): RenderablePlayer {
+  return {
+    ...player,
+    targetX: player.x,
+    targetY: player.y,
+    targetFacingX: player.facingX,
+    targetFacingY: player.facingY
   };
 }
 
@@ -396,6 +417,45 @@ function updateLocalPlayer(deltaSeconds: number) {
   }
 }
 
+function updateRenderedPlayers(deltaSeconds: number) {
+  renderedPlayers.clear();
+
+  for (const [id, player] of players) {
+    if (id === localPlayer?.id) {
+      renderedPlayers.set(id, player);
+      renderStates.delete(id);
+      continue;
+    }
+
+    const state = renderStates.get(id) ?? {
+      x: player.x,
+      y: player.y,
+      facingX: player.facingX,
+      facingY: player.facingY
+    };
+    const blend = 1 - Math.exp(-REMOTE_INTERPOLATION_SPEED * deltaSeconds);
+
+    state.x += (player.x - state.x) * blend;
+    state.y += (player.y - state.y) * blend;
+    state.facingX += (player.facingX - state.facingX) * blend;
+    state.facingY += (player.facingY - state.facingY) * blend;
+    renderStates.set(id, state);
+    renderedPlayers.set(id, {
+      ...player,
+      x: state.x,
+      y: state.y,
+      facingX: state.facingX,
+      facingY: state.facingY
+    });
+  }
+
+  for (const id of renderStates.keys()) {
+    if (!players.has(id)) {
+      renderStates.delete(id);
+    }
+  }
+}
+
 function drawGrid() {
   context.strokeStyle = "rgba(72, 94, 62, 0.34)";
   context.lineWidth = 1;
@@ -448,7 +508,7 @@ function draw() {
   context.fillRect(0, 0, world.width, world.height);
   drawGrid();
 
-  for (const player of players.values()) {
+  for (const player of renderedPlayers.values()) {
     drawPlayer(player, player.id === localPlayer?.id);
   }
 }
@@ -458,8 +518,9 @@ function tick(frameAt: number) {
   lastFrameAt = frameAt;
 
   updateLocalPlayer(deltaSeconds);
+  updateRenderedPlayers(deltaSeconds);
 
-  if (hasJoinedLobby && localPlayer && frameAt - lastSyncAt > 50) {
+  if (hasJoinedLobby && localPlayer && frameAt - lastSyncAt > SYNC_INTERVAL_MS) {
     lastSyncAt = frameAt;
     void syncLocalPlayer().catch((error) => {
       setStatus(`Sync failed: ${error.message}`, "error");
