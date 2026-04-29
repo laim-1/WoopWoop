@@ -60,26 +60,26 @@ app.innerHTML = `
 
 const canvasElement = document.querySelector<HTMLCanvasElement>("#game");
 const statusElement = document.querySelector<HTMLDivElement>("#status");
-const joinMenu = document.querySelector<HTMLElement>("#join-menu");
-const joinForm = document.querySelector<HTMLFormElement>("#join-form");
-const nameInput = document.querySelector<HTMLInputElement>("#player-name");
-const menuError = document.querySelector<HTMLParagraphElement>("#menu-error");
-const gameHud = document.querySelector<HTMLElement>("#game-hud");
-const lobbyPanel = document.querySelector<HTMLElement>("#lobby-panel");
-const playerCount = document.querySelector<HTMLSpanElement>("#player-count");
-const playersList = document.querySelector<HTMLUListElement>("#players-list");
+const joinMenuElement = document.querySelector<HTMLElement>("#join-menu");
+const joinFormElement = document.querySelector<HTMLFormElement>("#join-form");
+const nameInputElement = document.querySelector<HTMLInputElement>("#player-name");
+const menuErrorElement = document.querySelector<HTMLParagraphElement>("#menu-error");
+const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
+const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
+const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
+const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
 
 if (
   !canvasElement ||
   !statusElement ||
-  !joinMenu ||
-  !joinForm ||
-  !nameInput ||
-  !menuError ||
-  !gameHud ||
-  !lobbyPanel ||
-  !playerCount ||
-  !playersList
+  !joinMenuElement ||
+  !joinFormElement ||
+  !nameInputElement ||
+  !menuErrorElement ||
+  !gameHudElement ||
+  !lobbyPanelElement ||
+  !playerCountElement ||
+  !playersListElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -92,6 +92,14 @@ if (!renderingContext) {
 
 const canvas = canvasElement;
 const statusEl = statusElement;
+const joinMenu = joinMenuElement;
+const joinForm = joinFormElement;
+const nameInput = nameInputElement;
+const menuError = menuErrorElement;
+const gameHud = gameHudElement;
+const lobbyPanel = lobbyPanelElement;
+const playerCount = playerCountElement;
+const playersList = playersListElement;
 const context = renderingContext;
 
 const world = {
