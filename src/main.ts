@@ -719,6 +719,8 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
+  updateCustomizePanel();
+
   if (localPlayer?.area === SHOP_AREA) {
     drawShop();
   } else if (localPlayer?.area === HOME_AREA) {
