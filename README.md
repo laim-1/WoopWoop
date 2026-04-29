@@ -38,8 +38,8 @@ For early local testing only, you can use permissive database rules:
     "rooms": {
       "$roomId": {
         "players": {
+          ".read": "auth != null",
           "$uid": {
-            ".read": "auth != null",
             ".write": "auth != null && auth.uid == $uid"
           }
         }
