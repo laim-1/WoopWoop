@@ -39,6 +39,26 @@ app.innerHTML = `
         <button type="submit">Join Lobby</button>
       </form>
       <p class="menu-error" id="menu-error" role="alert"></p>
+
+      <form class="devtools-form" id="devtools-form">
+        <label for="devtools-password">Devtools password</label>
+        <div class="devtools-form__row">
+          <input
+            id="devtools-password"
+            name="devtoolsPassword"
+            placeholder="Password"
+            type="password"
+            autocomplete="off"
+          />
+          <button type="submit">Unlock</button>
+        </div>
+      </form>
+
+      <section class="devtools-panel is-hidden" id="devtools-panel">
+        <h2>Devtools</h2>
+        <p class="devtools-help" id="devtools-message">Kick stale accounts from the lobby.</p>
+        <ul class="devtools-list" id="devtools-players-list"></ul>
+      </section>
     </section>
 
     <section class="hud is-hidden" id="game-hud">
@@ -64,6 +84,11 @@ const joinMenuElement = document.querySelector<HTMLElement>("#join-menu");
 const joinFormElement = document.querySelector<HTMLFormElement>("#join-form");
 const nameInputElement = document.querySelector<HTMLInputElement>("#player-name");
 const menuErrorElement = document.querySelector<HTMLParagraphElement>("#menu-error");
+const devtoolsFormElement = document.querySelector<HTMLFormElement>("#devtools-form");
+const devtoolsPasswordElement = document.querySelector<HTMLInputElement>("#devtools-password");
+const devtoolsPanelElement = document.querySelector<HTMLElement>("#devtools-panel");
+const devtoolsMessageElement = document.querySelector<HTMLParagraphElement>("#devtools-message");
+const devtoolsPlayersListElement = document.querySelector<HTMLUListElement>("#devtools-players-list");
 const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
@@ -76,6 +101,11 @@ if (
   !joinFormElement ||
   !nameInputElement ||
   !menuErrorElement ||
+  !devtoolsFormElement ||
+  !devtoolsPasswordElement ||
+  !devtoolsPanelElement ||
+  !devtoolsMessageElement ||
+  !devtoolsPlayersListElement ||
   !gameHudElement ||
   !lobbyPanelElement ||
   !playerCountElement ||
@@ -96,6 +126,11 @@ const joinMenu = joinMenuElement;
 const joinForm = joinFormElement;
 const nameInput = nameInputElement;
 const menuError = menuErrorElement;
+const devtoolsForm = devtoolsFormElement;
+const devtoolsPassword = devtoolsPasswordElement;
+const devtoolsPanel = devtoolsPanelElement;
+const devtoolsMessage = devtoolsMessageElement;
+const devtoolsPlayersList = devtoolsPlayersListElement;
 const gameHud = gameHudElement;
 const lobbyPanel = lobbyPanelElement;
 const playerCount = playerCountElement;
@@ -109,6 +144,7 @@ const world = {
   speed: 260
 };
 
+const DEVTOOLS_PASSWORD = "0310";
 const keys = new Set<string>();
 const players = new Map<string, Player>();
 let localPlayer: Player | null = null;
@@ -116,6 +152,8 @@ let lastFrameAt = performance.now();
 let lastSyncAt = 0;
 let playersUnsubscribe: Unsubscribe | null = null;
 let animationStarted = false;
+let devtoolsUnlocked = false;
+let hasJoinedLobby = false;
 
 window.addEventListener("keydown", (event) => {
   if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
@@ -167,6 +205,7 @@ function renderPlayersList() {
 
   playerCount.textContent = String(orderedPlayers.length);
   playersList.innerHTML = "";
+  devtoolsPlayersList.innerHTML = "";
 
   for (const player of orderedPlayers) {
     const item = document.createElement("li");
@@ -188,6 +227,39 @@ function renderPlayersList() {
     }
 
     playersList.append(item);
+
+    if (devtoolsUnlocked) {
+      const devtoolsItem = document.createElement("li");
+      const devtoolsSwatch = document.createElement("span");
+      const details = document.createElement("span");
+      const playerName = document.createElement("span");
+      const playerId = document.createElement("small");
+      const kickButton = document.createElement("button");
+
+      devtoolsItem.className = "devtools-row";
+      details.className = "devtools-player-details";
+      devtoolsSwatch.className = "player-swatch";
+      devtoolsSwatch.style.background = player.color;
+      playerName.textContent = player.name;
+      playerId.textContent = player.id;
+      kickButton.type = "button";
+      kickButton.textContent = player.id === localPlayer?.id ? "You" : "Kick";
+      kickButton.disabled = player.id === localPlayer?.id;
+      kickButton.addEventListener("click", () => {
+        void kickPlayer(player.id, player.name);
+      });
+
+      details.append(playerName, playerId);
+      devtoolsItem.append(devtoolsSwatch, details, kickButton);
+      devtoolsPlayersList.append(devtoolsItem);
+    }
+  }
+
+  if (devtoolsUnlocked && orderedPlayers.length === 0) {
+    const emptyItem = document.createElement("li");
+    emptyItem.className = "devtools-empty";
+    emptyItem.textContent = "No connected players.";
+    devtoolsPlayersList.append(emptyItem);
   }
 }
 
@@ -283,7 +355,7 @@ function tick(frameAt: number) {
 
   updateLocalPlayer(deltaSeconds);
 
-  if (localPlayer && frameAt - lastSyncAt > 50) {
+  if (hasJoinedLobby && localPlayer && frameAt - lastSyncAt > 50) {
     lastSyncAt = frameAt;
     void syncLocalPlayer().catch((error) => {
       setStatus(`Sync failed: ${error.message}`, "error");
@@ -294,18 +366,7 @@ function tick(frameAt: number) {
   requestAnimationFrame(tick);
 }
 
-async function joinLobby(playerName: string) {
-  const playerId = await signInPlayer();
-
-  localPlayer = makePlayer(playerId, playerName);
-  players.set(localPlayer.id, localPlayer);
-  renderPlayersList();
-  showGame();
-  setStatus("Connected", "online");
-
-  await syncLocalPlayer();
-  await onDisconnect(playerRef(localPlayer.id)).remove();
-
+function subscribeToLobby() {
   playersUnsubscribe?.();
   playersUnsubscribe = onValue(
     playersRef(),
@@ -320,16 +381,47 @@ async function joinLobby(playerName: string) {
       }
 
       if (localPlayer && !players.has(localPlayer.id)) {
-        players.set(localPlayer.id, localPlayer);
+        localPlayer = null;
+        setStatus("You were kicked from the lobby.", "error");
       }
 
       renderPlayersList();
-      setStatus(`Connected: ${players.size} player${players.size === 1 ? "" : "s"}`, "online");
+
+      if (hasJoinedLobby && localPlayer) {
+        setStatus(`Connected: ${players.size} player${players.size === 1 ? "" : "s"}`, "online");
+      }
     },
     (error) => {
-      setStatus(`Lobby read failed: ${error.message}`, "error");
+      if (devtoolsUnlocked) {
+        devtoolsMessage.textContent = `Could not read lobby: ${error.message}`;
+      }
+
+      if (hasJoinedLobby) {
+        setStatus(`Lobby read failed: ${error.message}`, "error");
+      }
     }
   );
+}
+
+async function kickPlayer(playerId: string, playerName: string) {
+  devtoolsMessage.textContent = `Kicking ${playerName}...`;
+  await remove(playerRef(playerId));
+  devtoolsMessage.textContent = `Kicked ${playerName}.`;
+}
+
+async function joinLobby(playerName: string) {
+  const playerId = await signInPlayer();
+
+  localPlayer = makePlayer(playerId, playerName);
+  players.set(localPlayer.id, localPlayer);
+  hasJoinedLobby = true;
+  renderPlayersList();
+  showGame();
+  setStatus("Connected", "online");
+
+  await syncLocalPlayer();
+  await onDisconnect(playerRef(localPlayer.id)).remove();
+  subscribeToLobby();
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {
@@ -342,6 +434,28 @@ async function joinLobby(playerName: string) {
     requestAnimationFrame(tick);
   }
 }
+
+devtoolsForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  if (devtoolsPassword.value !== DEVTOOLS_PASSWORD) {
+    devtoolsMessage.textContent = "Wrong devtools password.";
+    return;
+  }
+
+  devtoolsUnlocked = true;
+  devtoolsPassword.value = "";
+  devtoolsPanel.classList.remove("is-hidden");
+  devtoolsMessage.textContent = "Devtools unlocked.";
+
+  void signInPlayer()
+    .then(() => {
+      subscribeToLobby();
+    })
+    .catch((error) => {
+      devtoolsMessage.textContent = `Could not unlock devtools: ${error.message}`;
+    });
+});
 
 joinForm.addEventListener("submit", (event) => {
   event.preventDefault();

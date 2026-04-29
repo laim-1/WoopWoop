@@ -40,7 +40,7 @@ For early local testing only, you can use permissive database rules:
         "players": {
           ".read": "auth != null",
           "$uid": {
-            ".write": "auth != null && auth.uid == $uid"
+            ".write": "auth != null && (auth.uid == $uid || !newData.exists())"
           }
         }
       }
