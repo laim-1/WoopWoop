@@ -9,11 +9,17 @@ type Player = {
   y: number;
   facingX: number;
   facingY: number;
+  moving: boolean;
+  step: number;
+  area: Area;
   name: string;
   lastSeen?: number | object;
 };
 
 type PlayerRecord = Omit<Player, "id">;
+type PlayerSnapshot = Partial<PlayerRecord>;
+
+type Area = "forest" | "home";
 
 type KickedRecord = {
   kickedAt?: number | object;
@@ -159,6 +165,9 @@ const world = {
 
 const DEVTOOLS_PASSWORD = "0310";
 const DEFAULT_FACING = { x: 0, y: 1 };
+const FOREST_AREA: Area = "forest";
+const HOME_AREA: Area = "home";
+const TRANSITION_PADDING = 24;
 const REMOTE_INTERPOLATION_SPEED = 12;
 const SYNC_INTERVAL_MS = 90;
 const keys = new Set<string>();
@@ -203,6 +212,10 @@ function normalizeFacing(player: Player) {
   };
 }
 
+function normalizeArea(area: PlayerSnapshot["area"]): Area {
+  return area === HOME_AREA ? HOME_AREA : FOREST_AREA;
+}
+
 function makePlayer(userId: string, name: string): Player {
   return {
     id: userId,
@@ -210,6 +223,9 @@ function makePlayer(userId: string, name: string): Player {
     y: world.height / 2 + Math.random() * 120 - 60,
     facingX: DEFAULT_FACING.x,
     facingY: DEFAULT_FACING.y,
+    area: FOREST_AREA,
+    moving: false,
+    step: 0,
     name
   };
 }
@@ -270,7 +286,8 @@ function showGame() {
 }
 
 function renderPlayersList() {
-  const orderedPlayers = [...players.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const visiblePlayers = [...players.values()].filter((player) => player.area === currentArea());
+  const orderedPlayers = visiblePlayers.sort((a, b) => a.name.localeCompare(b.name));
   const kickedPlayers = [...kickedPlayerIds].sort();
 
   playerCount.textContent = String(orderedPlayers.length);
@@ -372,8 +389,11 @@ async function syncLocalPlayer() {
   const record: PlayerRecord = {
     x: Math.round(localPlayer.x),
     y: Math.round(localPlayer.y),
+    area: localPlayer.area,
     facingX: localPlayer.facingX,
     facingY: localPlayer.facingY,
+    moving: localPlayer.moving,
+    step: localPlayer.step,
     name: localPlayer.name,
     lastSeen: serverTimestamp()
   };
@@ -394,16 +414,38 @@ function updateLocalPlayer(deltaSeconds: number) {
   if (keys.has("KeyA")) dx -= 1;
   if (keys.has("KeyD")) dx += 1;
 
-  if (dx !== 0 || dy !== 0) {
+  localPlayer.moving = dx !== 0 || dy !== 0;
+
+  if (localPlayer.moving) {
     const length = Math.hypot(dx, dy);
     const normalizedX = dx / length;
     const normalizedY = dy / length;
     localPlayer.facingX = normalizedX;
     localPlayer.facingY = normalizedY;
+    localPlayer.step += deltaSeconds * 10;
     localPlayer.x += normalizedX * world.speed * deltaSeconds;
     localPlayer.y += normalizedY * world.speed * deltaSeconds;
-    localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
-    localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
+  } else {
+    localPlayer.step = 0;
+  }
+
+  localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
+  localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
+
+  if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
+    localPlayer.area = HOME_AREA;
+    localPlayer.x = world.width - world.playerRadius - TRANSITION_PADDING;
+    localPlayer.y = world.height / 2;
+    localPlayer.facingX = -1;
+    localPlayer.facingY = 0;
+    setStatus("Entered home", "online");
+  } else if (localPlayer.area === HOME_AREA && localPlayer.x >= world.width - world.playerRadius) {
+    localPlayer.area = FOREST_AREA;
+    localPlayer.x = world.playerRadius + TRANSITION_PADDING;
+    localPlayer.y = world.height / 2;
+    localPlayer.facingX = 1;
+    localPlayer.facingY = 0;
+    setStatus("Entered forest", "online");
   }
 }
 
@@ -411,8 +453,13 @@ function updateRenderedPlayers(deltaSeconds: number) {
   renderedPlayers.clear();
 
   for (const [id, player] of players) {
-    if (id === localPlayer?.id) {
-      renderedPlayers.set(id, player);
+    if (player.area !== currentArea()) {
+      renderStates.delete(id);
+      continue;
+    }
+
+    if (id === localPlayer?.id && localPlayer) {
+      renderedPlayers.set(id, localPlayer);
       renderStates.delete(id);
       continue;
     }
@@ -440,13 +487,16 @@ function updateRenderedPlayers(deltaSeconds: number) {
   }
 
   for (const id of renderStates.keys()) {
-    if (!players.has(id)) {
+    const player = players.get(id);
+    if (!player || player.area !== currentArea()) {
       renderStates.delete(id);
     }
   }
 }
 
-function drawGrid() {
+function drawForest() {
+  context.fillStyle = "#314529";
+  context.fillRect(0, 0, world.width, world.height);
   context.strokeStyle = "rgba(72, 94, 62, 0.34)";
   context.lineWidth = 1;
 
@@ -463,6 +513,40 @@ function drawGrid() {
     context.lineTo(world.width, y);
     context.stroke();
   }
+
+  context.fillStyle = "rgba(18, 31, 16, 0.72)";
+  context.fillRect(0, 0, 18, world.height);
+  context.fillStyle = "#d8c9aa";
+  context.font = "16px system-ui, sans-serif";
+  context.textAlign = "left";
+  context.fillText("Home entrance", 28, world.height / 2 - 12);
+}
+
+function drawHome() {
+  context.fillStyle = "#5f472b";
+  context.fillRect(0, 0, world.width, world.height);
+
+  context.strokeStyle = "rgba(45, 31, 19, 0.34)";
+  context.lineWidth = 2;
+  for (let x = 24; x < world.width; x += 48) {
+    context.beginPath();
+    context.moveTo(x, 0);
+    context.lineTo(x, world.height);
+    context.stroke();
+  }
+
+  context.fillStyle = "#2f2519";
+  context.fillRect(0, 0, world.width, 28);
+  context.fillRect(0, world.height - 28, world.width, 28);
+  context.fillRect(0, 0, 28, world.height);
+  context.fillRect(world.width - 28, 0, 28, world.height);
+
+  context.fillStyle = "#80613a";
+  context.fillRect(96, 96, 150, 86);
+  context.fillStyle = "#f2ead8";
+  context.font = "16px system-ui, sans-serif";
+  context.textAlign = "right";
+  context.fillText("Forest exit", world.width - 36, world.height / 2 - 12);
 }
 
 function drawPlayer(player: Player, isLocal: boolean) {
@@ -471,6 +555,20 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const eyeOffsetY = facing.y * 5;
   const perpendicularX = -facing.y * 4;
   const perpendicularY = facing.x * 4;
+  const handSwing = player.moving ? Math.sin(player.step) * 4 : 0;
+  const leftHandX = player.x + perpendicularX * 3 + facing.x * handSwing;
+  const leftHandY = player.y + perpendicularY * 3 + facing.y * handSwing;
+  const rightHandX = player.x - perpendicularX * 3 - facing.x * handSwing;
+  const rightHandY = player.y - perpendicularY * 3 - facing.y * handSwing;
+
+  context.fillStyle = "#f5f1e8";
+  context.strokeStyle = "#7b6f58";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.arc(leftHandX, leftHandY, 5, 0, Math.PI * 2);
+  context.arc(rightHandX, rightHandY, 5, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
 
   context.beginPath();
   context.fillStyle = "#f5f1e8";
@@ -494,9 +592,11 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
-  context.fillStyle = "#314529";
-  context.fillRect(0, 0, world.width, world.height);
-  drawGrid();
+  if (localPlayer?.area === HOME_AREA) {
+    drawHome();
+  } else {
+    drawForest();
+  }
 
   for (const player of renderedPlayers.values()) {
     drawPlayer(player, player.id === localPlayer?.id);
@@ -526,7 +626,7 @@ function subscribeToLobby() {
   playersUnsubscribe = onValue(
     playersRef(),
     (snapshot) => {
-      const records = snapshot.val() as Record<string, PlayerRecord> | null;
+      const records = snapshot.val() as Record<string, PlayerSnapshot> | null;
       players.clear();
 
       if (records) {
@@ -534,8 +634,14 @@ function subscribeToLobby() {
           players.set(id, {
             ...player,
             id,
+            x: player.x ?? world.width / 2,
+            y: player.y ?? world.height / 2,
+            area: normalizeArea(player.area),
             facingX: player.facingX ?? DEFAULT_FACING.x,
-            facingY: player.facingY ?? DEFAULT_FACING.y
+            facingY: player.facingY ?? DEFAULT_FACING.y,
+            moving: player.moving ?? false,
+            step: player.step ?? 0,
+            name: player.name ?? `Player ${id.slice(0, 5)}`
           });
         }
       }
@@ -621,6 +727,7 @@ async function joinLobby(playerName: string) {
 
   localPlayer = makePlayer(playerId, playerName);
   players.set(localPlayer.id, localPlayer);
+  renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
   renderPlayersList();
   showGame();
