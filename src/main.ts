@@ -216,6 +216,10 @@ function normalizeArea(area: PlayerSnapshot["area"]): Area {
   return area === HOME_AREA ? HOME_AREA : FOREST_AREA;
 }
 
+function currentArea(): Area {
+  return localPlayer?.area ?? FOREST_AREA;
+}
+
 function makePlayer(userId: string, name: string): Player {
   return {
     id: userId,
