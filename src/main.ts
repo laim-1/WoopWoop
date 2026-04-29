@@ -214,16 +214,6 @@ function makePlayer(userId: string, name: string): Player {
   };
 }
 
-function makeRenderablePlayer(player: Player): RenderablePlayer {
-  return {
-    ...player,
-    targetX: player.x,
-    targetY: player.y,
-    targetFacingX: player.facingX,
-    targetFacingY: player.facingY
-  };
-}
-
 function playerRef(playerId: string) {
   return ref(database, `rooms/lobby/players/${playerId}`);
 }
