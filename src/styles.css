@@ -3,8 +3,8 @@
 }
 
 :root {
-  color: #e8f1ff;
-  background: #0d1220;
+  color: #f2ead8;
+  background: #182414;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -37,9 +37,9 @@ body {
   min-height: 100vh;
   place-items: center;
   background:
-    radial-gradient(circle at 25% 20%, rgba(59, 130, 246, 0.24), transparent 28rem),
-    radial-gradient(circle at 75% 80%, rgba(34, 197, 94, 0.16), transparent 24rem),
-    #0d1220;
+    radial-gradient(circle at 20% 15%, rgba(114, 97, 55, 0.28), transparent 24rem),
+    radial-gradient(circle at 80% 75%, rgba(53, 83, 44, 0.28), transparent 28rem),
+    linear-gradient(135deg, #172312, #26381d 52%, #1b2817);
 }
 
 .menu {
@@ -47,9 +47,9 @@ body {
   width: min(92vw, 28rem);
   gap: 1rem;
   padding: 2rem;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid rgba(196, 171, 119, 0.28);
   border-radius: 1.5rem;
-  background: rgba(15, 23, 42, 0.84);
+  background: rgba(38, 50, 31, 0.88);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
   backdrop-filter: blur(16px);
 }
@@ -65,7 +65,7 @@ body {
 }
 
 .menu p {
-  color: #cbd5e1;
+  color: #d8c9aa;
 }
 
 .join-form {
@@ -76,7 +76,7 @@ body {
 .join-form label {
   display: grid;
   gap: 0.375rem;
-  color: #cbd5e1;
+  color: #d8c9aa;
   font-size: 0.875rem;
   font-weight: 700;
 }
@@ -90,22 +90,22 @@ body {
 
 .join-form input {
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  border: 1px solid rgba(196, 171, 119, 0.32);
   padding: 0 0.875rem;
-  background: rgba(15, 23, 42, 0.72);
-  color: #e8f1ff;
+  background: rgba(24, 36, 20, 0.72);
+  color: #f2ead8;
   outline: none;
 }
 
 .join-form input:focus {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.18);
+  border-color: #bfa36a;
+  box-shadow: 0 0 0 3px rgba(191, 163, 106, 0.18);
 }
 
 .join-form button {
   border: 0;
-  background: #3b82f6;
-  color: white;
+  background: #5b7f43;
+  color: #fbf6e8;
   cursor: pointer;
   font-weight: 800;
 }
@@ -119,13 +119,13 @@ body {
   display: grid;
   gap: 0.75rem;
   padding-top: 0.5rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-top: 1px solid rgba(196, 171, 119, 0.18);
 }
 
 .devtools-form label {
   display: grid;
   gap: 0.375rem;
-  color: #cbd5e1;
+  color: #d8c9aa;
   font-size: 0.875rem;
   font-weight: 700;
 }
@@ -139,17 +139,17 @@ body {
 
 .devtools-form input {
   width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  border: 1px solid rgba(196, 171, 119, 0.32);
   padding: 0 0.875rem;
-  background: rgba(15, 23, 42, 0.72);
-  color: #e8f1ff;
+  background: rgba(24, 36, 20, 0.72);
+  color: #f2ead8;
   outline: none;
 }
 
 .devtools-form button {
   border: 0;
-  background: #f97316;
-  color: white;
+  background: #8a5f2f;
+  color: #fbf6e8;
   cursor: pointer;
   font-weight: 800;
 }
@@ -164,9 +164,9 @@ body {
   display: grid;
   gap: 0.75rem;
   padding: 1rem;
-  border: 1px solid rgba(251, 146, 60, 0.4);
+  border: 1px solid rgba(191, 139, 78, 0.42);
   border-radius: 1rem;
-  background: rgba(124, 45, 18, 0.32);
+  background: rgba(83, 58, 33, 0.38);
 }
 
 .devtools-panel h2,
@@ -179,7 +179,7 @@ body {
 }
 
 .devtools-help {
-  color: #fed7aa;
+  color: #e4c99a;
   font-size: 0.8125rem;
 }
 
@@ -198,13 +198,13 @@ body {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 0.5rem;
-  color: #ffedd5;
+  color: #f2ead8;
   font-size: 0.875rem;
 }
 
 .devtools-row small {
   display: block;
-  color: #fdba74;
+  color: #caaa73;
   font-size: 0.6875rem;
 }
 
@@ -213,8 +213,8 @@ body {
   border: 0;
   border-radius: 0.5rem;
   padding: 0 0.75rem;
-  background: #dc2626;
-  color: white;
+  background: #8b3f2f;
+  color: #fbf6e8;
   cursor: pointer;
   font-weight: 800;
 }
@@ -224,15 +224,28 @@ body {
   opacity: 0.5;
 }
 
+.devtools-row--kicked button {
+  background: #5b7f43;
+}
+
+.kicked-marker {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: 0 0 auto;
+  border: 2px solid rgba(242, 234, 216, 0.5);
+  border-radius: 999px;
+  background: #8b3f2f;
+}
+
 .devtools-empty {
-  color: #fed7aa;
+  color: #e4c99a;
   font-size: 0.875rem;
 }
 
 .menu-error {
   min-height: 1.25rem;
   margin: 0;
-  color: #fca5a5;
+  color: #d8927f;
   font-size: 0.875rem;
 }
 
@@ -240,8 +253,8 @@ body {
   width: min(100vw, 1024px);
   height: min(100vh, 768px);
   max-height: 100vh;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: #111827;
+  border: 1px solid rgba(196, 171, 119, 0.24);
+  background: #314529;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
 }
 
@@ -253,9 +266,9 @@ body {
   gap: 0.5rem;
   max-width: min(28rem, calc(100vw - 2rem));
   padding: 0.875rem 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid rgba(196, 171, 119, 0.24);
   border-radius: 1rem;
-  background: rgba(15, 23, 42, 0.78);
+  background: rgba(38, 50, 31, 0.82);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(12px);
 }
@@ -268,7 +281,7 @@ body {
 
 .hud p {
   margin: 0;
-  color: #cbd5e1;
+  color: #d8c9aa;
   font-size: 0.875rem;
 }
 
@@ -277,19 +290,19 @@ body {
   justify-self: start;
   padding: 0.25rem 0.5rem;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.16);
-  color: #cbd5e1;
+  background: rgba(196, 171, 119, 0.14);
+  color: #d8c9aa;
   font-size: 0.8125rem;
   font-weight: 700;
 }
 
 .status[data-state="online"] {
-  color: #86efac;
+  color: #b9d58a;
 }
 
 .status[data-state="offline"],
 .status[data-state="error"] {
-  color: #fca5a5;
+  color: #d8927f;
 }
 
 .lobby-panel {
@@ -298,9 +311,9 @@ body {
   top: 1rem;
   width: min(18rem, calc(100vw - 2rem));
   padding: 0.875rem 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid rgba(196, 171, 119, 0.24);
   border-radius: 1rem;
-  background: rgba(15, 23, 42, 0.78);
+  background: rgba(38, 50, 31, 0.82);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(12px);
 }
@@ -322,7 +335,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #dbeafe;
+  color: #f2ead8;
   font-size: 0.875rem;
 }
 
@@ -330,14 +343,22 @@ body {
   width: 0.875rem;
   height: 0.875rem;
   flex: 0 0 auto;
-  border: 2px solid rgba(255, 255, 255, 0.55);
+  border: 2px solid rgba(49, 69, 41, 0.8);
   border-radius: 999px;
-  background: var(--player-color);
+  background: #f5f1e8;
+}
+
+.kicked-marker {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #8b3f2f;
 }
 
 .player-you {
   margin-left: auto;
-  color: #86efac;
+  color: #b9d58a;
   font-size: 0.75rem;
   font-weight: 800;
 }
