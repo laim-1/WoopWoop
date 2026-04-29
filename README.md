@@ -64,6 +64,17 @@ npm run dev
 Open the local URL in two browser tabs. Each tab signs in anonymously and writes
 its player to `rooms/lobby/players/{uid}`.
 
+## Art assets
+
+Place the title logo at:
+
+```text
+public/assets/branding/title-logo.png
+```
+
+The current source logo is 1254x900. It can stay that size; the app will scale
+it down on the title screen.
+
 ## Scripts
 
 - `npm run dev` - start the Vite dev server
