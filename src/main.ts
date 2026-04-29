@@ -1,4 +1,4 @@
-import { onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
+import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { database, signInPlayer } from "./firebase";
 import "./styles.css";
@@ -7,12 +7,18 @@ type Player = {
   id: string;
   x: number;
   y: number;
-  color: string;
+  facingX: number;
+  facingY: number;
   name: string;
   lastSeen?: number | object;
 };
 
 type PlayerRecord = Omit<Player, "id">;
+
+type KickedRecord = {
+  kickedAt?: number | object;
+  name?: string;
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -145,12 +151,15 @@ const world = {
 };
 
 const DEVTOOLS_PASSWORD = "0310";
+const DEFAULT_FACING = { x: 0, y: 1 };
 const keys = new Set<string>();
 const players = new Map<string, Player>();
+const kickedPlayerIds = new Set<string>();
 let localPlayer: Player | null = null;
 let lastFrameAt = performance.now();
 let lastSyncAt = 0;
 let playersUnsubscribe: Unsubscribe | null = null;
+let kickedUnsubscribe: Unsubscribe | null = null;
 let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
@@ -175,7 +184,8 @@ function makePlayer(userId: string, name: string): Player {
     id: userId,
     x: world.width / 2 + Math.random() * 120 - 60,
     y: world.height / 2 + Math.random() * 120 - 60,
-    color: `hsl(${Math.floor(Math.random() * 360)} 75% 58%)`,
+    facingX: DEFAULT_FACING.x,
+    facingY: DEFAULT_FACING.y,
     name
   };
 }
@@ -186,6 +196,28 @@ function playerRef(playerId: string) {
 
 function playersRef() {
   return ref(database, "rooms/lobby/players");
+}
+
+function kickedPlayerRef(playerId: string) {
+  return ref(database, `rooms/lobby/kicked/${playerId}`);
+}
+
+function kickedPlayersRef() {
+  return ref(database, "rooms/lobby/kicked");
+}
+
+async function loadKickedPlayers() {
+  const snapshot = await get(kickedPlayersRef());
+  const records = snapshot.val() as Record<string, KickedRecord> | null;
+  kickedPlayerIds.clear();
+
+  if (records) {
+    for (const id of Object.keys(records)) {
+      kickedPlayerIds.add(id);
+    }
+  }
+
+  renderPlayersList();
 }
 
 function setStatus(message: string, state: "online" | "offline" | "error") {
@@ -202,6 +234,7 @@ function showGame() {
 
 function renderPlayersList() {
   const orderedPlayers = [...players.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const kickedPlayers = [...kickedPlayerIds].sort();
 
   playerCount.textContent = String(orderedPlayers.length);
   playersList.innerHTML = "";
@@ -214,7 +247,6 @@ function renderPlayersList() {
 
     item.className = "player-row";
     swatch.className = "player-swatch";
-    swatch.style.background = player.color;
     name.textContent = player.name;
 
     item.append(swatch, name);
@@ -239,7 +271,6 @@ function renderPlayersList() {
       devtoolsItem.className = "devtools-row";
       details.className = "devtools-player-details";
       devtoolsSwatch.className = "player-swatch";
-      devtoolsSwatch.style.background = player.color;
       playerName.textContent = player.name;
       playerId.textContent = player.id;
       kickButton.type = "button";
@@ -255,10 +286,43 @@ function renderPlayersList() {
     }
   }
 
+  if (devtoolsUnlocked && orderedPlayers.length > 0 && kickedPlayers.length > 0) {
+    const separator = document.createElement("li");
+    separator.className = "devtools-empty";
+    separator.textContent = "Kicked markers";
+    devtoolsPlayersList.append(separator);
+  }
+
+  if (devtoolsUnlocked && kickedPlayers.length > 0) {
+    for (const kickedPlayerId of kickedPlayers) {
+      const kickedItem = document.createElement("li");
+      const marker = document.createElement("span");
+      const details = document.createElement("span");
+      const label = document.createElement("span");
+      const playerId = document.createElement("small");
+      const clearButton = document.createElement("button");
+
+      kickedItem.className = "devtools-row devtools-row--kicked";
+      details.className = "devtools-player-details";
+      marker.className = "kicked-marker";
+      label.textContent = "Kicked player";
+      playerId.textContent = kickedPlayerId;
+      clearButton.type = "button";
+      clearButton.textContent = "Unkick";
+      clearButton.addEventListener("click", () => {
+        void clearKick(kickedPlayerId, kickedPlayerId);
+      });
+
+      details.append(label, playerId);
+      kickedItem.append(marker, details, clearButton);
+      devtoolsPlayersList.append(kickedItem);
+    }
+  }
+
   if (devtoolsUnlocked && orderedPlayers.length === 0) {
     const emptyItem = document.createElement("li");
     emptyItem.className = "devtools-empty";
-    emptyItem.textContent = "No connected players.";
+    emptyItem.textContent = kickedPlayers.length === 0 ? "No connected players." : "No active players.";
     devtoolsPlayersList.append(emptyItem);
   }
 }
@@ -271,7 +335,8 @@ async function syncLocalPlayer() {
   const record: PlayerRecord = {
     x: Math.round(localPlayer.x),
     y: Math.round(localPlayer.y),
-    color: localPlayer.color,
+    facingX: localPlayer.facingX,
+    facingY: localPlayer.facingY,
     name: localPlayer.name,
     lastSeen: serverTimestamp()
   };
@@ -294,15 +359,19 @@ function updateLocalPlayer(deltaSeconds: number) {
 
   if (dx !== 0 || dy !== 0) {
     const length = Math.hypot(dx, dy);
-    localPlayer.x += (dx / length) * world.speed * deltaSeconds;
-    localPlayer.y += (dy / length) * world.speed * deltaSeconds;
+    const normalizedX = dx / length;
+    const normalizedY = dy / length;
+    localPlayer.facingX = normalizedX;
+    localPlayer.facingY = normalizedY;
+    localPlayer.x += normalizedX * world.speed * deltaSeconds;
+    localPlayer.y += normalizedY * world.speed * deltaSeconds;
     localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
     localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
   }
 }
 
 function drawGrid() {
-  context.strokeStyle = "#223047";
+  context.strokeStyle = "rgba(72, 94, 62, 0.34)";
   context.lineWidth = 1;
 
   for (let x = 0; x <= world.width; x += 40) {
@@ -321,18 +390,27 @@ function drawGrid() {
 }
 
 function drawPlayer(player: Player, isLocal: boolean) {
+  const facing = normalizeFacing(player);
+  const eyeOffsetX = facing.x * 5;
+  const eyeOffsetY = facing.y * 5;
+  const perpendicularX = -facing.y * 4;
+  const perpendicularY = facing.x * 4;
+
   context.beginPath();
-  context.fillStyle = player.color;
+  context.fillStyle = "#f5f1e8";
   context.arc(player.x, player.y, world.playerRadius, 0, Math.PI * 2);
   context.fill();
+  context.strokeStyle = isLocal ? "#2f4a2d" : "#7b6f58";
+  context.lineWidth = isLocal ? 4 : 2;
+  context.stroke();
 
-  if (isLocal) {
-    context.strokeStyle = "#ffffff";
-    context.lineWidth = 3;
-    context.stroke();
-  }
+  context.fillStyle = "#11130f";
+  context.beginPath();
+  context.arc(player.x + eyeOffsetX + perpendicularX, player.y + eyeOffsetY + perpendicularY, 2.4, 0, Math.PI * 2);
+  context.arc(player.x + eyeOffsetX - perpendicularX, player.y + eyeOffsetY - perpendicularY, 2.4, 0, Math.PI * 2);
+  context.fill();
 
-  context.fillStyle = "#e5eefc";
+  context.fillStyle = "#f2ead8";
   context.font = "14px system-ui, sans-serif";
   context.textAlign = "center";
   context.fillText(isLocal ? "You" : player.name, player.x, player.y - 26);
@@ -340,7 +418,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
-  context.fillStyle = "#101827";
+  context.fillStyle = "#314529";
   context.fillRect(0, 0, world.width, world.height);
   drawGrid();
 
@@ -376,13 +454,13 @@ function subscribeToLobby() {
 
       if (records) {
         for (const [id, player] of Object.entries(records)) {
-          players.set(id, { id, ...player });
+          players.set(id, {
+            ...player,
+            id,
+            facingX: player.facingX ?? DEFAULT_FACING.x,
+            facingY: player.facingY ?? DEFAULT_FACING.y
+          });
         }
-      }
-
-      if (localPlayer && !players.has(localPlayer.id)) {
-        localPlayer = null;
-        setStatus("You were kicked from the lobby.", "error");
       }
 
       renderPlayersList();
@@ -403,14 +481,62 @@ function subscribeToLobby() {
   );
 }
 
+function subscribeToKickedPlayers() {
+  kickedUnsubscribe?.();
+  kickedUnsubscribe = onValue(
+    kickedPlayersRef(),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, KickedRecord> | null;
+      kickedPlayerIds.clear();
+
+      if (records) {
+        for (const id of Object.keys(records)) {
+          kickedPlayerIds.add(id);
+        }
+      }
+
+      if (localPlayer && kickedPlayerIds.has(localPlayer.id)) {
+        const kickedPlayer = localPlayer;
+        localPlayer = null;
+        hasJoinedLobby = false;
+        keys.clear();
+        void remove(playerRef(kickedPlayer.id));
+        setStatus("You were kicked from the lobby.", "error");
+      }
+
+      renderPlayersList();
+    },
+    (error) => {
+      if (devtoolsUnlocked) {
+        devtoolsMessage.textContent = `Could not read kicks: ${error.message}`;
+      }
+    }
+  );
+}
+
 async function kickPlayer(playerId: string, playerName: string) {
   devtoolsMessage.textContent = `Kicking ${playerName}...`;
+  await set(kickedPlayerRef(playerId), {
+    kickedAt: serverTimestamp(),
+    name: playerName
+  } satisfies KickedRecord);
   await remove(playerRef(playerId));
   devtoolsMessage.textContent = `Kicked ${playerName}.`;
 }
 
+async function clearKick(playerId: string, playerName: string) {
+  devtoolsMessage.textContent = `Clearing kick for ${playerName}...`;
+  await remove(kickedPlayerRef(playerId));
+  devtoolsMessage.textContent = `${playerName} can rejoin.`;
+}
+
 async function joinLobby(playerName: string) {
   const playerId = await signInPlayer();
+  await loadKickedPlayers();
+
+  if (kickedPlayerIds.has(playerId)) {
+    throw new Error("This browser was kicked from the lobby. Clear the kicked marker in devtools to rejoin.");
+  }
 
   localPlayer = makePlayer(playerId, playerName);
   players.set(localPlayer.id, localPlayer);
@@ -422,6 +548,7 @@ async function joinLobby(playerName: string) {
   await syncLocalPlayer();
   await onDisconnect(playerRef(localPlayer.id)).remove();
   subscribeToLobby();
+  subscribeToKickedPlayers();
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {
@@ -449,8 +576,10 @@ devtoolsForm.addEventListener("submit", (event) => {
   devtoolsMessage.textContent = "Devtools unlocked.";
 
   void signInPlayer()
-    .then(() => {
+    .then(async () => {
+      await loadKickedPlayers();
       subscribeToLobby();
+      subscribeToKickedPlayers();
     })
     .catch((error) => {
       devtoolsMessage.textContent = `Could not unlock devtools: ${error.message}`;
