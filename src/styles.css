@@ -64,6 +64,16 @@ body {
   line-height: 1;
 }
 
+.title-logo {
+  width: min(100%, 22rem);
+  height: auto;
+  justify-self: center;
+}
+
+.title-logo + h1 {
+  font-size: 1.75rem;
+}
+
 .menu p {
   color: #d8c9aa;
 }
