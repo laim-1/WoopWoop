@@ -363,7 +363,7 @@ window.addEventListener("resize", () => {
 const world = {
   width: gameMap.world.width,
   height: gameMap.world.height,
-  playerRadius: 48
+  playerRadius: 42
 };
 
 const DEVTOOLS_PASSWORD = "0310";
@@ -502,24 +502,100 @@ function drawResourceNode(node: ResourceNode) {
     context.fillStyle = node.biome === "mountain" ? "#e9f1f6" : "#4d7f4e";
     context.fill();
   } else if (node.type === "rock") {
+    const sides = 6;
+    const rotation = Math.PI / 6;
+    context.save();
+    context.translate(node.x, node.y);
+
+    // Chunky drop shadow to match icon style.
     context.beginPath();
-    context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-    context.fillStyle = "#7c8792";
+    for (let i = 0; i < sides; i += 1) {
+      const angle = rotation + (i / sides) * Math.PI * 2;
+      const px = Math.cos(angle) * node.radius;
+      const py = Math.sin(angle) * node.radius + 4;
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = "rgba(0, 0, 0, 0.22)";
     context.fill();
-    context.strokeStyle = "#5a646e";
-    context.lineWidth = 2;
+
+    // Main face.
+    context.beginPath();
+    for (let i = 0; i < sides; i += 1) {
+      const angle = rotation + (i / sides) * Math.PI * 2;
+      const px = Math.cos(angle) * node.radius;
+      const py = Math.sin(angle) * node.radius;
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = "#9ca3ad";
+    context.fill();
+
+    // Inner lighter face.
+    context.beginPath();
+    for (let i = 0; i < sides; i += 1) {
+      const angle = rotation + (i / sides) * Math.PI * 2;
+      const px = Math.cos(angle) * (node.radius * 0.72);
+      const py = Math.sin(angle) * (node.radius * 0.72);
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = "#c9ced5";
+    context.fill();
+
+    context.strokeStyle = "#5f646c";
+    context.lineWidth = 3;
     context.stroke();
+    context.restore();
   } else {
+    context.save();
+    context.translate(node.x, node.y);
+
+    // Leaf cluster base.
+    context.fillStyle = "#6f9251";
     context.beginPath();
-    context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-    context.fillStyle = "#3f7f47";
+    context.arc(-node.radius * 0.34, 0, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(node.radius * 0.34, 0, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(0, -node.radius * 0.34, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(0, node.radius * 0.34, node.radius * 0.46, 0, Math.PI * 2);
     context.fill();
+
+    // Lighter leaf center.
+    context.fillStyle = "#8eb064";
     context.beginPath();
-    context.arc(node.x - node.radius * 0.35, node.y - node.radius * 0.1, node.radius * 0.22, 0, Math.PI * 2);
-    context.arc(node.x + node.radius * 0.24, node.y + node.radius * 0.16, node.radius * 0.22, 0, Math.PI * 2);
-    context.arc(node.x + node.radius * 0.06, node.y - node.radius * 0.28, node.radius * 0.2, 0, Math.PI * 2);
-    context.fillStyle = "#cf2f3b";
+    context.arc(0, 0, node.radius * 0.42, 0, Math.PI * 2);
     context.fill();
+
+    // Berry dots.
+    context.fillStyle = "#c64a48";
+    context.beginPath();
+    context.arc(-node.radius * 0.22, -node.radius * 0.16, node.radius * 0.16, 0, Math.PI * 2);
+    context.arc(node.radius * 0.2, -node.radius * 0.04, node.radius * 0.16, 0, Math.PI * 2);
+    context.arc(-node.radius * 0.02, node.radius * 0.2, node.radius * 0.16, 0, Math.PI * 2);
+    context.fill();
+
+    // Outline pass for icon look.
+    context.strokeStyle = "#4d5f3f";
+    context.lineWidth = 2.5;
+    context.beginPath();
+    context.arc(-node.radius * 0.34, 0, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(node.radius * 0.34, 0, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(0, -node.radius * 0.34, node.radius * 0.46, 0, Math.PI * 2);
+    context.arc(0, node.radius * 0.34, node.radius * 0.46, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
   }
 }
 
@@ -725,9 +801,9 @@ function spawnResourceNode(
   const x = xMin + rng() * Math.max(1, xMax - xMin);
   const y = yMin + rng() * Math.max(1, yMax - yMin);
   const radiusByType: Record<ResourceNodeType, number> = {
-    tree: 28,
-    rock: 24,
-    berries: 18
+    tree: 44,
+    rock: 38,
+    berries: 30
   };
   const hpByType: Record<ResourceNodeType, number> = {
     tree: 4,
