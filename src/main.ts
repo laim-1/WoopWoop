@@ -220,7 +220,10 @@ app.innerHTML = `
     </aside>
 
     <section class="paint-controls is-hidden" id="paint-controls">
-      <button type="button" class="paint-controls-toggle" id="paint-controls-toggle" aria-expanded="false">🖌</button>
+      <div class="paint-controls-actions">
+        <button type="button" class="paint-controls-toggle" id="paint-controls-toggle" aria-expanded="false">🖌</button>
+        <button type="button" class="hitboxes-toggle" id="hitboxes-toggle" aria-pressed="false">Hitboxes</button>
+      </div>
       <form class="paint-controls-panel is-hidden" id="paint-controls-panel">
         <label>Body <input id="paint-body" type="color" value="#ffffff" /></label>
         <label>Hands <input id="paint-hands" type="color" value="#ffffff" /></label>
@@ -271,6 +274,7 @@ const resourcePanelElement = document.querySelector<HTMLElement>("#resource-pane
 const resourceCountsElement = document.querySelector<HTMLParagraphElement>("#resource-counts");
 const paintControlsElement = document.querySelector<HTMLElement>("#paint-controls");
 const paintControlsToggleElement = document.querySelector<HTMLButtonElement>("#paint-controls-toggle");
+const hitboxesToggleElement = document.querySelector<HTMLButtonElement>("#hitboxes-toggle");
 const paintControlsPanelElement = document.querySelector<HTMLFormElement>("#paint-controls-panel");
 const paintBodyElement = document.querySelector<HTMLInputElement>("#paint-body");
 const paintHandsElement = document.querySelector<HTMLInputElement>("#paint-hands");
@@ -310,6 +314,7 @@ if (
   !resourceCountsElement ||
   !paintControlsElement ||
   !paintControlsToggleElement ||
+  !hitboxesToggleElement ||
   !paintControlsPanelElement ||
   !paintBodyElement ||
   !paintHandsElement ||
@@ -357,6 +362,7 @@ const resourcePanel = resourcePanelElement;
 const resourceCounts = resourceCountsElement;
 const paintControls = paintControlsElement;
 const paintControlsToggle = paintControlsToggleElement;
+const hitboxesToggle = hitboxesToggleElement;
 const paintControlsPanel = paintControlsPanelElement;
 const paintBodyInput = paintBodyElement;
 const paintHandsInput = paintHandsElement;
@@ -459,6 +465,7 @@ const peeParticles: PeeParticle[] = [];
 const resourceHitParticles: ResourceHitParticle[] = [];
 let peeEmissionCarry = 0;
 let paintPanelOpen = false;
+let showHitboxes = false;
 const localPlayerColors: PlayerColorPalette = {
   body: "#ffffff",
   hands: "#ffffff",
@@ -786,23 +793,67 @@ function triggerPunch() {
   }
 
   const target = findAttackTarget();
-  if (!target) {
-    return;
-  }
-
-  const aimDx = target.x - localPlayer.x;
-  const aimDy = target.y - localPlayer.y;
-  const aimLength = Math.max(1, Math.hypot(aimDx, aimDy));
-  lastPunchAimX = aimDx / aimLength;
-  lastPunchAimY = aimDy / aimLength;
-
-  if (!performResourceAttack(target)) {
-    return;
+  if (target) {
+    const aimDx = target.x - localPlayer.x;
+    const aimDy = target.y - localPlayer.y;
+    const aimLength = Math.max(1, Math.hypot(aimDx, aimDy));
+    lastPunchAimX = aimDx / aimLength;
+    lastPunchAimY = aimDy / aimLength;
+    void performResourceAttack(target);
+  } else {
+    const facingLength = Math.max(1, Math.hypot(localPlayer.facingX, localPlayer.facingY));
+    lastPunchAimX = localPlayer.facingX / facingLength;
+    lastPunchAimY = localPlayer.facingY / facingLength;
   }
 
   activePunchSide = nextPunchSide;
   nextPunchSide = nextPunchSide === 1 ? -1 : 1;
   lastPunchAt = performance.now();
+}
+
+function drawHitboxesOverlay() {
+  if (!showHitboxes) {
+    return;
+  }
+
+  context.save();
+  context.lineWidth = 2;
+
+  for (const node of resourceNodes) {
+    if (node.hp <= 0) {
+      continue;
+    }
+
+    // Harvestable/targetable node bounds.
+    context.strokeStyle = "rgba(255, 225, 60, 0.9)";
+    context.beginPath();
+    context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    context.stroke();
+
+    // Collision bounds.
+    let collisionRadius = 0;
+    if (node.type === "tree") {
+      collisionRadius = node.radius * 0.24;
+    } else if (node.type === "rock") {
+      collisionRadius = node.radius * 0.88;
+    }
+    if (collisionRadius > 0) {
+      context.strokeStyle = "rgba(255, 90, 90, 0.95)";
+      context.beginPath();
+      context.arc(node.x, node.y, collisionRadius, 0, Math.PI * 2);
+      context.stroke();
+    }
+  }
+
+  if (localPlayer) {
+    // Player body collision.
+    context.strokeStyle = "rgba(80, 190, 255, 0.95)";
+    context.beginPath();
+    context.arc(localPlayer.x, localPlayer.y, world.playerRadius, 0, Math.PI * 2);
+    context.stroke();
+  }
+
+  context.restore();
 }
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -1596,6 +1647,7 @@ function draw() {
     }
     drawResourceNode(node);
   }
+  drawHitboxesOverlay();
   drawResourceHitParticles();
   drawPeeParticles();
   context.restore();
@@ -1888,6 +1940,12 @@ chatDrawerToggle.addEventListener("click", () => {
 
 paintControlsToggle.addEventListener("click", () => {
   setPaintPanelOpen(!paintPanelOpen);
+});
+
+hitboxesToggle.addEventListener("click", () => {
+  showHitboxes = !showHitboxes;
+  hitboxesToggle.setAttribute("aria-pressed", String(showHitboxes));
+  hitboxesToggle.textContent = showHitboxes ? "Hitboxes On" : "Hitboxes";
 });
 
 paintBodyInput.addEventListener("input", () => {

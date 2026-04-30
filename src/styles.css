@@ -392,6 +392,12 @@ body {
   z-index: 20;
 }
 
+.paint-controls-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .paint-controls-toggle {
   width: 2.4rem;
   height: 2.4rem;
@@ -402,6 +408,24 @@ body {
   font: inherit;
   font-size: 1.05rem;
   cursor: pointer;
+}
+
+.hitboxes-toggle {
+  min-height: 2.4rem;
+  padding: 0 0.7rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 999px;
+  background: rgba(38, 50, 31, 0.88);
+  color: #f2ead8;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hitboxes-toggle[aria-pressed="true"] {
+  border-color: rgba(145, 221, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(145, 221, 255, 0.2);
 }
 
 .paint-controls-panel {
