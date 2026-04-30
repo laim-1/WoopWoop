@@ -342,8 +342,17 @@ body {
 }
 
 .hud-resources {
+  position: fixed;
+  right: 1rem;
+  top: 1rem;
+  z-index: 30;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(196, 171, 119, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(38, 50, 31, 0.9);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
   color: #f2ead8;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   font-weight: 700;
 }
 

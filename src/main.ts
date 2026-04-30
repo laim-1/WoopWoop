@@ -412,7 +412,7 @@ const MINIMAP_WIDTH = 220;
 const MINIMAP_HEIGHT = 150;
 const MINIMAP_MARGIN = 20;
 const ATTACK_RANGE = 112;
-const ATTACK_CONE_DOT = 0.25;
+const ATTACK_CONE_DOT = 0.72;
 const ATTACK_COOLDOWN_MS = 220;
 const PUNCH_DURATION_MS = 210;
 const PUNCH_REACH = 52;
@@ -519,7 +519,7 @@ window.addEventListener("keydown", (event) => {
     chatInput.focus();
     event.preventDefault();
   } else if (event.code === "KeyE" || event.code === "Space") {
-    tryAttackResource();
+    triggerPunch();
     event.preventDefault();
   } else if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "ShiftLeft", "ShiftRight"].includes(event.code)) {
     keys.add(event.code);
@@ -695,14 +695,9 @@ function drawResourceNode(node: ResourceNode) {
   }
 }
 
-function tryAttackResource() {
+function findAttackTarget(): ResourceNode | null {
   if (!localPlayer || !hasJoinedLobby) {
-    return;
-  }
-
-  const now = performance.now();
-  if (now - lastAttackAt < ATTACK_COOLDOWN_MS) {
-    return;
+    return null;
   }
 
   let target: ResourceNode | null = null;
@@ -732,15 +727,20 @@ function tryAttackResource() {
     }
   }
 
-  if (!target) {
-    return;
+  return target;
+}
+
+function performResourceAttack(target: ResourceNode): boolean {
+  const now = performance.now();
+  if (now - lastAttackAt < ATTACK_COOLDOWN_MS) {
+    return false;
   }
 
   lastAttackAt = now;
   target.hp -= 1;
   emitResourceHitParticles(target);
   if (target.hp > 0) {
-    return;
+    return true;
   }
 
   if (target.type === "tree") {
@@ -751,6 +751,7 @@ function tryAttackResource() {
     inventory.berries += 1;
   }
   updateResourcePanel();
+  return true;
 }
 
 function emitResourceHitParticles(node: ResourceNode) {
@@ -781,10 +782,18 @@ function triggerPunch() {
     return;
   }
 
+  const target = findAttackTarget();
+  if (!target) {
+    return;
+  }
+
+  if (!performResourceAttack(target)) {
+    return;
+  }
+
   activePunchSide = nextPunchSide;
   nextPunchSide = nextPunchSide === 1 ? -1 : 1;
   lastPunchAt = performance.now();
-  tryAttackResource();
 }
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -881,6 +890,7 @@ function showGame() {
   joinMenu.classList.add("is-hidden");
   gameHud.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
+  resourcePanel.classList.remove("is-hidden");
   chatPanel.classList.remove("is-hidden");
   canvas.classList.remove("is-hidden");
 }
@@ -1618,6 +1628,10 @@ function tick(frameAt: number) {
   updatePeeParticles(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
   updateCamera(deltaSeconds);
+
+  if (findAttackTarget()) {
+    triggerPunch();
+  }
 
   if (isFirebaseConfigured && hasJoinedLobby && localPlayer && frameAt - lastSyncAt > SYNC_INTERVAL_MS) {
     lastSyncAt = frameAt;
