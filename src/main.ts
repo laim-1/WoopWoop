@@ -64,6 +64,16 @@ type ResourceInventory = {
   berries: number;
 };
 
+type PeeParticle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: number;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -388,6 +398,7 @@ const MINIMAP_MARGIN = 20;
 const ATTACK_RANGE = 112;
 const ATTACK_CONE_DOT = 0.25;
 const ATTACK_COOLDOWN_MS = 220;
+const PEE_PARTICLES_PER_SECOND = 48;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -418,6 +429,8 @@ const inventory: ResourceInventory = {
   stone: 0,
   berries: 0
 };
+const peeParticles: PeeParticle[] = [];
+let peeEmissionCarry = 0;
 
 function screenToWorldX(cameraX: number, screenX: number) {
   return cameraX + (screenX - canvas.width / 2) / CAMERA_ZOOM;
@@ -1202,6 +1215,66 @@ function updateLocalPlayer(deltaSeconds: number) {
   localPlayer.y = moved.y;
 }
 
+function emitPeeParticles(player: Player, deltaSeconds: number) {
+  const facingLength = Math.max(1, Math.hypot(player.facingX, player.facingY));
+  const fx = player.facingX / facingLength;
+  const fy = player.facingY / facingLength;
+  const sideX = -fy;
+  const sideY = fx;
+  const originX = player.x + fx * (world.playerRadius * 0.95);
+  const originY = player.y + fy * (world.playerRadius * 0.95);
+
+  const totalToEmit = PEE_PARTICLES_PER_SECOND * deltaSeconds + peeEmissionCarry;
+  const emitCount = Math.floor(totalToEmit);
+  peeEmissionCarry = totalToEmit - emitCount;
+
+  for (let i = 0; i < emitCount; i += 1) {
+    const forwardSpeed = 230 + Math.random() * 95;
+    const sideJitter = (Math.random() - 0.5) * 70;
+    const upJitter = (Math.random() - 0.5) * 28;
+    peeParticles.push({
+      x: originX + sideX * ((Math.random() - 0.5) * 8),
+      y: originY + sideY * ((Math.random() - 0.5) * 8),
+      vx: fx * forwardSpeed + sideX * sideJitter,
+      vy: fy * forwardSpeed + sideY * sideJitter + upJitter,
+      life: 0.44 + Math.random() * 0.32,
+      maxLife: 0.44 + Math.random() * 0.32,
+      size: 2.2 + Math.random() * 2
+    });
+  }
+}
+
+function updatePeeParticles(deltaSeconds: number) {
+  if (localPlayer && keys.has("KeyP")) {
+    emitPeeParticles(localPlayer, deltaSeconds);
+  } else {
+    peeEmissionCarry = 0;
+  }
+
+  for (let i = peeParticles.length - 1; i >= 0; i -= 1) {
+    const particle = peeParticles[i];
+    particle.life -= deltaSeconds;
+    if (particle.life <= 0) {
+      peeParticles.splice(i, 1);
+      continue;
+    }
+    particle.vx *= Math.exp(-2.2 * deltaSeconds);
+    particle.vy *= Math.exp(-2.2 * deltaSeconds);
+    particle.x += particle.vx * deltaSeconds;
+    particle.y += particle.vy * deltaSeconds;
+  }
+}
+
+function drawPeeParticles() {
+  for (const particle of peeParticles) {
+    const alpha = Math.max(0, particle.life / Math.max(0.001, particle.maxLife));
+    context.fillStyle = `rgba(248, 219, 82, ${0.25 + alpha * 0.65})`;
+    context.beginPath();
+    context.arc(particle.x, particle.y, particle.size * (0.6 + alpha * 0.4), 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
 function updateRenderedPlayers(deltaSeconds: number) {
   renderedPlayers.clear();
 
@@ -1354,6 +1427,7 @@ function draw() {
     }
     drawResourceNode(node);
   }
+  drawPeeParticles();
   context.restore();
 
   context.fillStyle = "#f2ead8";
@@ -1393,6 +1467,7 @@ function tick(frameAt: number) {
   lastFrameAt = frameAt;
 
   updateLocalPlayer(deltaSeconds);
+  updatePeeParticles(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
   updateCamera(deltaSeconds);
 
