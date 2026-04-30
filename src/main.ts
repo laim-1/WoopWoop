@@ -1,16 +1,15 @@
 import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
-import { database, isFirebaseConfigured, signInPlayer } from "./firebase";
+import { createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount, signInPlayer } from "./firebase";
+import { createGameMapRenderer, loadGameMap } from "./map";
 import "./styles.css";
 
-type Area = "forest" | "home";
+type Area = "forest";
 type CharacterId = "boybrown" | "girlblonde" | "girlbrown";
 
 type CharacterOption = {
   id: CharacterId;
   label: string;
-  src: string;
-  sprites?: Partial<Record<AnimationState, string>>;
 };
 
 type Player = {
@@ -50,35 +49,13 @@ type RenderState = {
   facingY: number;
 };
 
-type AnimationState = "idle" | "walk" | "run" | "jump";
-type SpriteLayer = "shadow" | "body" | "head";
-type IdlePlaybackState = {
-  nextStartAt: number;
-  activeStartAt: number;
-  activeEndAt: number;
-};
-type ForestTilemap = {
-  width: number;
-  height: number;
-  tileWidth: number;
-  tileHeight: number;
-  drawTileWidth: number;
-  drawTileHeight: number;
-  columns: number;
-  firstGid: number;
-  layers: number[][][];
-  image: HTMLImageElement;
-};
-type StoredAccount = {
+type UsernameIndexRecord = {
+  email: string;
   username: string;
-  normalizedUsername?: string;
-  passwordHash: string;
-  characterId: CharacterId;
+  uid: string;
   createdAt?: number | object;
   lastLoginAt?: number | object;
-  uid?: string;
 };
-type AccountsStore = Record<string, StoredAccount>;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -87,23 +64,13 @@ if (!app) {
 }
 
 const assetBase = import.meta.env.BASE_URL;
-const BASE_WORLD_WIDTH = 960;
-const BASE_WORLD_HEIGHT = 640;
+const gameMap = await loadGameMap(assetBase);
+const mapRenderer = createGameMapRenderer(gameMap);
 const titleLogoSrc = `${assetBase}assets/branding/title-logo.png`;
 const characters: CharacterOption[] = [
-  {
-    id: "boybrown",
-    label: "Boy Brown",
-    src: `${assetBase}assets/characters/unarmed-run-head.png`,
-    sprites: {
-      idle: `${assetBase}assets/characters/unarmed-idle-shadow.png`,
-      run: `${assetBase}assets/characters/unarmed-run-shadow.png`,
-      walk: `${assetBase}assets/characters/unarmed-walk-shadow.png`,
-      jump: `${assetBase}assets/characters/unarmed-run-head.png`
-    }
-  },
-  { id: "girlblonde", label: "Girl Blonde", src: `${assetBase}assets/characters/girlblonde.png` },
-  { id: "girlbrown", label: "Girl Brown", src: `${assetBase}assets/characters/girlbrown.png` }
+  { id: "boybrown", label: "Boy Brown" },
+  { id: "girlblonde", label: "Girl Blonde" },
+  { id: "girlbrown", label: "Girl Brown" }
 ];
 
 app.innerHTML = `
@@ -155,6 +122,17 @@ app.innerHTML = `
           placeholder="Username"
           required
           autocomplete="nickname"
+        />
+        <label for="create-email">Email</label>
+        <input
+          id="create-email"
+          maxlength="120"
+          minlength="5"
+          name="createEmail"
+          placeholder="Email"
+          required
+          type="email"
+          autocomplete="email"
         />
         <label for="create-password">Password</label>
         <input
@@ -225,6 +203,7 @@ const createTabElement = document.querySelector<HTMLButtonElement>("#auth-create
 const signInUsernameElement = document.querySelector<HTMLInputElement>("#signin-username");
 const signInPasswordElement = document.querySelector<HTMLInputElement>("#signin-password");
 const createUsernameElement = document.querySelector<HTMLInputElement>("#create-username");
+const createEmailElement = document.querySelector<HTMLInputElement>("#create-email");
 const createPasswordElement = document.querySelector<HTMLInputElement>("#create-password");
 const menuErrorElement = document.querySelector<HTMLParagraphElement>("#menu-error");
 const devtoolsFormElement = document.querySelector<HTMLFormElement>("#devtools-form");
@@ -252,6 +231,7 @@ if (
   !signInUsernameElement ||
   !signInPasswordElement ||
   !createUsernameElement ||
+  !createEmailElement ||
   !createPasswordElement ||
   !menuErrorElement ||
   !devtoolsFormElement ||
@@ -287,6 +267,7 @@ const createTab = createTabElement;
 const signInUsername = signInUsernameElement;
 const signInPassword = signInPasswordElement;
 const createUsername = createUsernameElement;
+const createEmail = createEmailElement;
 const createPassword = createPasswordElement;
 const menuError = menuErrorElement;
 const devtoolsForm = devtoolsFormElement;
@@ -305,36 +286,47 @@ const chatInput = chatInputElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
+function resizeCanvasToViewport() {
+  const nextWidth = Math.max(1, Math.floor(window.innerWidth));
+  const nextHeight = Math.max(1, Math.floor(window.innerHeight));
+
+  if (canvas.width === nextWidth && canvas.height === nextHeight) {
+    return;
+  }
+
+  canvas.width = nextWidth;
+  canvas.height = nextHeight;
+}
+
+resizeCanvasToViewport();
+window.addEventListener("resize", () => {
+  resizeCanvasToViewport();
+});
+
 const world = {
-  width: BASE_WORLD_WIDTH,
-  height: BASE_WORLD_HEIGHT,
+  width: gameMap.world.width,
+  height: gameMap.world.height,
   playerRadius: 24
 };
 
 const DEVTOOLS_PASSWORD = "0310";
 const DEFAULT_FACING = { x: 0, y: 1 };
 const FOREST_AREA: Area = "forest";
-const HOME_AREA: Area = "home";
-const TRANSITION_PADDING = 24;
 const REMOTE_INTERPOLATION_SPEED = 12;
 const SYNC_INTERVAL_MS = 90;
 const CHAT_LIMIT = 20;
 const CHAT_MAX_LENGTH = 120;
-const SPRITE_SIZE = 110;
-const SPRITE_FRAME_SIZE = 64;
-const SPRITE_IDLE_COLUMNS = 12;
-const SPRITE_WALK_COLUMNS = 6;
-const SPRITE_RUN_COLUMNS = 8;
-const IDLE_FRAME_MS = 110;
-const IDLE_MIN_INTERVAL_MS = 10_000;
-const IDLE_MAX_INTERVAL_MS = 20_000;
 const DEFAULT_CHARACTER_ID: CharacterId = characters[0].id;
 const WALK_SPEED = 220;
 const RUN_SPEED = 320;
+const MOVE_ACCELERATION = 8;
+const MOVE_FRICTION = 2.4;
 const OFFLINE_PLAYER_ID = "offline-local-player";
-const CAMERA_ZOOM = 2;
-const FOREST_TILEMAP_PATH = `${assetBase}assets/maps/forest-map.json`;
-const LOCAL_ACCOUNTS_KEY = "woopwoop.accounts.v1";
+const CAMERA_ZOOM = 1.25;
+const CAMERA_FOLLOW_SPEED = 10;
+const MINIMAP_WIDTH = 220;
+const MINIMAP_HEIGHT = 150;
+const MINIMAP_MARGIN = 20;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -342,306 +334,21 @@ const renderedPlayers = new Map<string, Player>();
 const renderStates = new Map<string, RenderState>();
 const kickedPlayerIds = new Set<string>();
 const chatMessagesById = new Map<string, ChatMessage & { id: string }>();
-const characterImages = new Map<CharacterId, HTMLImageElement>();
-const spriteImages = new Map<string, HTMLImageElement>();
-const layeredSpriteImages = new Map<string, HTMLImageElement>();
-const idlePlaybackStates = new Map<string, IdlePlaybackState>();
 let selectedCharacterId: CharacterId = DEFAULT_CHARACTER_ID;
 let localPlayer: Player | null = null;
+let localVelocityX = 0;
+let localVelocityY = 0;
 let lastFrameAt = performance.now();
 let lastSyncAt = 0;
+let cameraX = world.width / 2;
+let cameraY = world.height / 2;
 let playersUnsubscribe: Unsubscribe | null = null;
 let kickedUnsubscribe: Unsubscribe | null = null;
 let chatUnsubscribe: Unsubscribe | null = null;
 let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
-let forestTilemap: ForestTilemap | null = null;
-
-for (const character of characters) {
-  const image = new Image();
-  image.src = character.src;
-  characterImages.set(character.id, image);
-
-  if (character.sprites) {
-    for (const [state, src] of Object.entries(character.sprites)) {
-      if (!src) {
-        continue;
-      }
-
-      const spriteImage = new Image();
-      spriteImage.src = src;
-      spriteImages.set(`${character.id}:${state}`, spriteImage);
-    }
-  }
-}
-
-function preloadLayeredSprite(characterId: CharacterId, state: AnimationState, layer: SpriteLayer, src: string) {
-  const spriteImage = new Image();
-  spriteImage.src = src;
-  layeredSpriteImages.set(`${characterId}:${state}:${layer}`, spriteImage);
-}
-
-preloadLayeredSprite("boybrown", "idle", "shadow", `${assetBase}assets/characters/unarmed-idle-shadow.png`);
-preloadLayeredSprite("boybrown", "idle", "body", `${assetBase}assets/characters/unarmed-idle-body.png`);
-preloadLayeredSprite("boybrown", "idle", "head", `${assetBase}assets/characters/unarmed-idle-head.png`);
-preloadLayeredSprite("boybrown", "walk", "shadow", `${assetBase}assets/characters/unarmed-walk-shadow.png`);
-preloadLayeredSprite("boybrown", "walk", "body", `${assetBase}assets/characters/unarmed-walk-body.png`);
-preloadLayeredSprite("boybrown", "walk", "head", `${assetBase}assets/characters/unarmed-walk-head.png`);
-preloadLayeredSprite("boybrown", "run", "shadow", `${assetBase}assets/characters/unarmed-run-shadow.png`);
-preloadLayeredSprite("boybrown", "run", "body", `${assetBase}assets/characters/unarmed-run-body.png`);
-preloadLayeredSprite("boybrown", "run", "head", `${assetBase}assets/characters/unarmed-run-head.png`);
-
-function getSpriteImage(characterId: CharacterId, state: AnimationState) {
-  return spriteImages.get(`${characterId}:${state}`);
-}
-
-function resolveMapAssetPath(mapPath: string, assetPath: string) {
-  if (assetPath.startsWith("http://") || assetPath.startsWith("https://") || assetPath.startsWith("/")) {
-    return assetPath;
-  }
-
-  const lastSlash = mapPath.lastIndexOf("/");
-  const basePath = lastSlash >= 0 ? mapPath.slice(0, lastSlash + 1) : "";
-  return `${basePath}${assetPath}`;
-}
-
-async function loadImage(src: string) {
-  const image = new Image();
-  image.src = src;
-  await image.decode();
-  return image;
-}
-
-function toLayerRows(flatData: number[], width: number, height: number) {
-  const rows: number[][] = [];
-
-  for (let y = 0; y < height; y += 1) {
-    const start = y * width;
-    rows.push(flatData.slice(start, start + width));
-  }
-
-  return rows;
-}
-
-function toSparseLayerRows(
-  tiles: Array<{ id: string | number; x: number; y: number }>,
-  width: number,
-  height: number,
-) {
-  const rows = Array.from({ length: height }, () => Array.from({ length: width }, () => 0));
-
-  for (const tile of tiles) {
-    if (tile.x < 0 || tile.x >= width || tile.y < 0 || tile.y >= height) {
-      continue;
-    }
-
-    const id = typeof tile.id === "string" ? Number(tile.id) : tile.id;
-    if (!Number.isFinite(id)) {
-      continue;
-    }
-
-    // Sparse map uses 0-based tile ids while renderer uses 1-based gid.
-    rows[tile.y][tile.x] = id + 1;
-  }
-
-  return rows;
-}
-
-async function loadForestTilemap() {
-  try {
-    const response = await fetch(FOREST_TILEMAP_PATH);
-    if (!response.ok) {
-      return;
-    }
-
-    const data = (await response.json()) as Record<string, unknown>;
-    const tiledLayers = Array.isArray(data.layers)
-      ? data.layers.filter(
-          (layer): layer is { data: number[]; type: string } =>
-            Boolean(layer) &&
-            typeof layer === "object" &&
-            (layer as { type?: unknown }).type === "tilelayer" &&
-            Array.isArray((layer as { data?: unknown }).data),
-        )
-      : [];
-    const tiledTileset = Array.isArray(data.tilesets)
-      ? (data.tilesets.find((tileset) => typeof tileset === "object" && tileset !== null) as
-          | { firstgid?: number; image?: string; columns?: number }
-          | undefined)
-      : undefined;
-
-    if (
-      typeof data.width === "number" &&
-      typeof data.height === "number" &&
-      typeof data.tilewidth === "number" &&
-      typeof data.tileheight === "number" &&
-      tiledTileset &&
-      typeof tiledTileset.image === "string" &&
-      typeof tiledTileset.columns === "number" &&
-      tiledLayers.length > 0
-    ) {
-      const imagePath = resolveMapAssetPath(FOREST_TILEMAP_PATH, tiledTileset.image);
-      const image = await loadImage(imagePath);
-      const loadedMap: ForestTilemap = {
-        width: data.width,
-        height: data.height,
-        tileWidth: data.tilewidth,
-        tileHeight: data.tileheight,
-        drawTileWidth: world.width / data.width,
-        drawTileHeight: world.height / data.height,
-        columns: tiledTileset.columns,
-        firstGid: tiledTileset.firstgid ?? 1,
-        layers: tiledLayers.map((layer) => toLayerRows(layer.data, data.width as number, data.height as number)),
-        image
-      };
-      forestTilemap = loadedMap;
-      return;
-    }
-
-    if (
-      typeof data.mapWidth === "number" &&
-      typeof data.mapHeight === "number" &&
-      typeof data.tileSize === "number" &&
-      Array.isArray(data.layers)
-    ) {
-      const sparseLayers = data.layers.filter(
-        (layer): layer is { tiles: Array<{ id: string | number; x: number; y: number }> } =>
-          Boolean(layer) &&
-          typeof layer === "object" &&
-          Array.isArray((layer as { tiles?: unknown }).tiles),
-      );
-
-      if (sparseLayers.length > 0) {
-        const imagePath = `${assetBase}assets/maps/forest-tileset.png`;
-        const image = await loadImage(imagePath);
-        const loadedMap: ForestTilemap = {
-          width: data.mapWidth,
-          height: data.mapHeight,
-          tileWidth: data.tileSize,
-          tileHeight: data.tileSize,
-          drawTileWidth: world.width / data.mapWidth,
-          drawTileHeight: world.height / data.mapHeight,
-          columns: Math.max(1, Math.floor(image.naturalWidth / data.tileSize)),
-          firstGid: 1,
-          layers: sparseLayers.map((layer) => toSparseLayerRows(layer.tiles, data.mapWidth as number, data.mapHeight as number)),
-          image
-        };
-        forestTilemap = loadedMap;
-        return;
-      }
-    }
-
-    if (
-      typeof data.width === "number" &&
-      typeof data.height === "number" &&
-      typeof data.tileSize === "number" &&
-      typeof data.tileset === "string" &&
-      typeof data.tilesetColumns === "number" &&
-      Array.isArray(data.layers)
-    ) {
-      const imagePath = resolveMapAssetPath(FOREST_TILEMAP_PATH, data.tileset);
-      const image = await loadImage(imagePath);
-      const layers = (data.layers as unknown[]).filter(Array.isArray).map((layer) => layer as number[]);
-      const loadedMap: ForestTilemap = {
-        width: data.width,
-        height: data.height,
-        tileWidth: data.tileSize,
-        tileHeight: data.tileSize,
-        drawTileWidth: world.width / data.width,
-        drawTileHeight: world.height / data.height,
-        columns: data.tilesetColumns,
-        firstGid: 1,
-        layers: layers.map((flatLayer) => toLayerRows(flatLayer, data.width as number, data.height as number)),
-        image
-      };
-      forestTilemap = loadedMap;
-    }
-  } catch (error) {
-    console.warn("Could not load forest tilemap.", error);
-  }
-}
-
-function getLayeredSpriteImage(characterId: CharacterId, state: AnimationState, layer: SpriteLayer) {
-  return layeredSpriteImages.get(`${characterId}:${state}:${layer}`);
-}
-
-function resolveAnimationState(player: Player, isLocal: boolean): AnimationState {
-  if (!player.moving) {
-    return "idle";
-  }
-
-  if (isLocal && (keys.has("ShiftLeft") || keys.has("ShiftRight"))) {
-    return "run";
-  }
-
-  return "walk";
-}
-
-function resolveDirectionRow(player: Player) {
-  if (Math.abs(player.facingX) > Math.abs(player.facingY)) {
-    return player.facingX < 0 ? 1 : 2;
-  }
-
-  return player.facingY < 0 ? 3 : 0;
-}
-
-function randomIdleDelayMs() {
-  return IDLE_MIN_INTERVAL_MS + Math.random() * (IDLE_MAX_INTERVAL_MS - IDLE_MIN_INTERVAL_MS);
-}
-
-function getIdleFrameColumn(player: Player, frameAtMs: number, idleFrameCount: number) {
-  const state = idlePlaybackStates.get(player.id) ?? {
-    nextStartAt: frameAtMs + randomIdleDelayMs(),
-    activeStartAt: 0,
-    activeEndAt: 0
-  };
-  idlePlaybackStates.set(player.id, state);
-
-  if (player.moving) {
-    state.activeStartAt = 0;
-    state.activeEndAt = 0;
-    state.nextStartAt = frameAtMs + randomIdleDelayMs();
-    return 0;
-  }
-
-  if (state.activeStartAt === 0 && frameAtMs >= state.nextStartAt) {
-    state.activeStartAt = frameAtMs;
-    state.activeEndAt = frameAtMs + IDLE_FRAME_MS * idleFrameCount;
-    state.nextStartAt = state.activeEndAt + randomIdleDelayMs();
-  }
-
-  if (state.activeStartAt === 0 || frameAtMs >= state.activeEndAt) {
-    state.activeStartAt = 0;
-    state.activeEndAt = 0;
-    return 0;
-  }
-
-  return Math.min(Math.floor((frameAtMs - state.activeStartAt) / IDLE_FRAME_MS), idleFrameCount - 1);
-}
-
-function getFrameCountForDirection(state: AnimationState, directionRow: number) {
-  if (state === "idle") {
-    // Provided idle sheets only include 4 frames on the north-facing row.
-    return directionRow === 3 ? 4 : SPRITE_IDLE_COLUMNS;
-  }
-
-  if (state === "walk") {
-    return SPRITE_WALK_COLUMNS;
-  }
-
-  return SPRITE_RUN_COLUMNS;
-}
-
-function resolveFrameColumn(player: Player, state: AnimationState, frameAtMs: number, directionRow: number) {
-  const frameCount = getFrameCountForDirection(state, directionRow);
-
-  if (state === "idle") {
-    return getIdleFrameColumn(player, frameAtMs, frameCount);
-  }
-
-  return Math.floor(player.step % frameCount);
-}
+let spawnPointIndex = 0;
 
 function screenToWorldX(cameraX: number, screenX: number) {
   return cameraX + (screenX - canvas.width / 2) / CAMERA_ZOOM;
@@ -664,15 +371,31 @@ function getCameraCenter() {
   const fallbackY = world.height / 2;
 
   if (!localPlayer) {
-    return { x: fallbackX, y: fallbackY };
+    return { x: cameraX || fallbackX, y: cameraY || fallbackY };
   }
 
   const halfViewWidth = canvas.width / (2 * CAMERA_ZOOM);
   const halfViewHeight = canvas.height / (2 * CAMERA_ZOOM);
+  const snapToCameraStep = (value: number) => Math.round(value * CAMERA_ZOOM) / CAMERA_ZOOM;
   return {
-    x: clamp(localPlayer.x, halfViewWidth, world.width - halfViewWidth),
-    y: clamp(localPlayer.y, halfViewHeight, world.height - halfViewHeight)
+    x: snapToCameraStep(clamp(cameraX, halfViewWidth, world.width - halfViewWidth)),
+    y: snapToCameraStep(clamp(cameraY, halfViewHeight, world.height - halfViewHeight))
   };
+}
+
+function updateCamera(deltaSeconds: number) {
+  if (!localPlayer) {
+    return;
+  }
+
+  const halfViewWidth = canvas.width / (2 * CAMERA_ZOOM);
+  const halfViewHeight = canvas.height / (2 * CAMERA_ZOOM);
+  const targetX = clamp(localPlayer.x, halfViewWidth, world.width - halfViewWidth);
+  const targetY = clamp(localPlayer.y, halfViewHeight, world.height - halfViewHeight);
+  const blend = 1 - Math.exp(-CAMERA_FOLLOW_SPEED * deltaSeconds);
+
+  cameraX += (targetX - cameraX) * blend;
+  cameraY += (targetY - cameraY) * blend;
 }
 
 window.addEventListener("keydown", (event) => {
@@ -700,8 +423,8 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function normalizeArea(area: PlayerSnapshot["area"]): Area {
-  return area === HOME_AREA ? HOME_AREA : FOREST_AREA;
+function normalizeArea(_area: PlayerSnapshot["area"]): Area {
+  return FOREST_AREA;
 }
 
 function normalizeCharacterId(characterId: PlayerSnapshot["characterId"]): CharacterId {
@@ -713,10 +436,12 @@ function currentArea(): Area {
 }
 
 function makePlayer(userId: string, name: string): Player {
+  const spawn = mapRenderer.getSpawnPoint(spawnPointIndex);
+  spawnPointIndex += 1;
   return {
     id: userId,
-    x: world.width / 2 + Math.random() * 120 - 60,
-    y: world.height / 2 + Math.random() * 120 - 60,
+    x: spawn.x,
+    y: spawn.y,
     facingX: DEFAULT_FACING.x,
     facingY: DEFAULT_FACING.y,
     area: FOREST_AREA,
@@ -755,12 +480,8 @@ function usernameStoreKey(normalizedUsername: string) {
   return normalizedUsername.replace(/[.#$[\]/]/g, "_");
 }
 
-function accountRefByUsername(normalizedUsername: string) {
+function usernameIndexRef(normalizedUsername: string) {
   return ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}`);
-}
-
-function accountLastLoginRef(normalizedUsername: string) {
-  return ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}/lastLoginAt`);
 }
 
 async function loadKickedPlayers(required = false) {
@@ -1002,42 +723,49 @@ function updateLocalPlayer(deltaSeconds: number) {
   if (keys.has("KeyA")) dx -= 1;
   if (keys.has("KeyD")) dx += 1;
 
-  localPlayer.moving = dx !== 0 || dy !== 0;
+  const hasInput = dx !== 0 || dy !== 0;
+  const sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight");
+  const speed = sprinting ? RUN_SPEED : WALK_SPEED;
+  let targetVelocityX = 0;
+  let targetVelocityY = 0;
 
-  if (localPlayer.moving) {
+  if (hasInput) {
     const length = Math.hypot(dx, dy);
     const normalizedX = dx / length;
     const normalizedY = dy / length;
-    localPlayer.facingX = normalizedX;
-    localPlayer.facingY = normalizedY;
-    const sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight");
-    const speed = sprinting ? RUN_SPEED : WALK_SPEED;
-    const animationSpeed = sprinting ? 13 : 9;
-    localPlayer.step += deltaSeconds * animationSpeed;
-    localPlayer.x += normalizedX * speed * deltaSeconds;
-    localPlayer.y += normalizedY * speed * deltaSeconds;
+    targetVelocityX = normalizedX * speed;
+    targetVelocityY = normalizedY * speed;
+  }
+
+  const accelBlend = 1 - Math.exp(-MOVE_ACCELERATION * deltaSeconds);
+  localVelocityX += (targetVelocityX - localVelocityX) * accelBlend;
+  localVelocityY += (targetVelocityY - localVelocityY) * accelBlend;
+
+  if (!hasInput) {
+    const friction = Math.exp(-MOVE_FRICTION * deltaSeconds);
+    localVelocityX *= friction;
+    localVelocityY *= friction;
+  }
+
+  const movementSpeed = Math.hypot(localVelocityX, localVelocityY);
+  localPlayer.moving = movementSpeed > 2;
+
+  if (localPlayer.moving) {
+    localPlayer.facingX = localVelocityX / movementSpeed;
+    localPlayer.facingY = localVelocityY / movementSpeed;
+    localPlayer.step += deltaSeconds * (sprinting ? 13 : 9);
   } else {
+    localVelocityX = 0;
+    localVelocityY = 0;
     localPlayer.step = 0;
   }
 
-  localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
-  localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
+  const nextX = localPlayer.x + localVelocityX * deltaSeconds;
+  const nextY = localPlayer.y + localVelocityY * deltaSeconds;
+  const moved = mapRenderer.moveWithCollision(localPlayer.x, localPlayer.y, nextX, nextY, world.playerRadius);
 
-  if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
-    localPlayer.area = HOME_AREA;
-    localPlayer.x = world.width - world.playerRadius - TRANSITION_PADDING;
-    localPlayer.y = world.height / 2;
-    localPlayer.facingX = -1;
-    localPlayer.facingY = 0;
-    setStatus("Entered home", "online");
-  } else if (localPlayer.area === HOME_AREA && localPlayer.x >= world.width - world.playerRadius) {
-    localPlayer.area = FOREST_AREA;
-    localPlayer.x = world.playerRadius + TRANSITION_PADDING;
-    localPlayer.y = world.height / 2;
-    localPlayer.facingX = 1;
-    localPlayer.facingY = 0;
-    setStatus("Entered main plaza", "online");
-  }
+  localPlayer.x = moved.x;
+  localPlayer.y = moved.y;
 }
 
 function updateRenderedPlayers(deltaSeconds: number) {
@@ -1046,7 +774,6 @@ function updateRenderedPlayers(deltaSeconds: number) {
   for (const [id, player] of players) {
     if (player.area !== currentArea()) {
       renderStates.delete(id);
-      idlePlaybackStates.delete(id);
       continue;
     }
 
@@ -1082,167 +809,84 @@ function updateRenderedPlayers(deltaSeconds: number) {
     const player = players.get(id);
     if (!player || player.area !== currentArea()) {
       renderStates.delete(id);
-      idlePlaybackStates.delete(id);
     }
   }
 }
 
-function drawForest() {
-  context.fillStyle = "#314529";
-  context.fillRect(0, 0, world.width, world.height);
-  context.strokeStyle = "rgba(72, 94, 62, 0.34)";
-  context.lineWidth = 1;
+function drawPlayer(player: Player, isLocal: boolean) {
+  const bodyRadius = world.playerRadius;
+  const handRadius = Math.max(5, Math.round(bodyRadius * 0.32));
+  const facingLength = Math.max(1, Math.hypot(player.facingX, player.facingY));
+  const facingX = player.facingX / facingLength;
+  const facingY = player.facingY / facingLength;
+  const sideX = -facingY;
+  const sideY = facingX;
+  const hasLocalInput = keys.has("KeyW") || keys.has("KeyA") || keys.has("KeyS") || keys.has("KeyD");
+  const animateArms = isLocal ? hasLocalInput : player.moving;
+  const armSwing = animateArms ? Math.sin(player.step * 5.2) : 0;
+  const handForward = bodyRadius * 0.66;
+  const handSide = bodyRadius * 0.52;
+  const handForwardOffsetA = armSwing * bodyRadius * 0.24;
+  const handForwardOffsetB = -armSwing * bodyRadius * 0.24;
+  const handBaseX = player.x + facingX * handForward;
+  const handBaseY = player.y + facingY * handForward;
+  const outlineColor = "#323254";
+  const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
+  const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
+  const eyeForward = bodyRadius * 0.34;
+  const eyeSide = bodyRadius * 0.38;
+  const eyeCenterX = player.x + facingX * eyeForward;
+  const eyeCenterY = player.y + facingY * eyeForward;
 
-  for (let x = 0; x <= world.width; x += 40) {
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, world.height);
-    context.stroke();
-  }
+  context.fillStyle = "rgba(18, 25, 16, 0.35)";
+  context.beginPath();
+  context.ellipse(player.x, player.y + bodyRadius * 0.72, bodyRadius * 0.9, bodyRadius * 0.36, 0, 0, Math.PI * 2);
+  context.fill();
 
-  for (let y = 0; y <= world.height; y += 40) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.lineTo(world.width, y);
-    context.stroke();
-  }
+  // Draw hands first so the body overlaps them.
+  context.fillStyle = isLocal ? "#d8c9aa" : "#cdbb97";
+  context.beginPath();
+  context.arc(
+    handBaseX + sideX * handSide + facingX * handForwardOffsetA,
+    handBaseY + sideY * handSide + facingY * handForwardOffsetA,
+    handRadius,
+    0,
+    Math.PI * 2
+  );
+  context.fill();
+  context.strokeStyle = outlineColor;
+  context.lineWidth = outlineWidth;
+  context.stroke();
 
-  context.fillStyle = "rgba(18, 31, 16, 0.72)";
-  context.fillRect(0, 0, 18, world.height);
-  context.fillStyle = "#d8c9aa";
-  context.font = "16px system-ui, sans-serif";
-  context.textAlign = "left";
-  context.fillText("Home entrance", 28, world.height / 2 - 12);
+  context.beginPath();
+  context.arc(
+    handBaseX - sideX * handSide + facingX * handForwardOffsetB,
+    handBaseY - sideY * handSide + facingY * handForwardOffsetB,
+    handRadius,
+    0,
+    Math.PI * 2
+  );
+  context.fill();
+  context.stroke();
+
+  // Body last so it sits above the hands.
+  context.fillStyle = isLocal ? "#f5f1e8" : "#e7deca";
+  context.beginPath();
+  context.arc(player.x, player.y, bodyRadius, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+
+  // Plain black eyes.
+  context.fillStyle = "#111111";
+  context.beginPath();
+  context.arc(eyeCenterX + sideX * eyeSide, eyeCenterY + sideY * eyeSide, eyeRadius, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(eyeCenterX - sideX * eyeSide, eyeCenterY - sideY * eyeSide, eyeRadius, 0, Math.PI * 2);
+  context.fill();
 }
 
-function drawForestTilemap() {
-  if (!forestTilemap || forestTilemap.layers.length === 0) {
-    drawForest();
-    return;
-  }
-
-  context.fillStyle = "#1f2c1c";
-  context.fillRect(0, 0, world.width, world.height);
-
-  for (const layer of forestTilemap.layers) {
-    for (let y = 0; y < forestTilemap.height; y += 1) {
-      const row = layer[y];
-      if (!row) {
-        continue;
-      }
-
-      for (let x = 0; x < forestTilemap.width; x += 1) {
-        const tileValue = row[x] ?? 0;
-        if (tileValue < forestTilemap.firstGid) {
-          continue;
-        }
-
-        const tileIndex = tileValue - forestTilemap.firstGid;
-        const sourceX = (tileIndex % forestTilemap.columns) * forestTilemap.tileWidth;
-        const sourceY = Math.floor(tileIndex / forestTilemap.columns) * forestTilemap.tileHeight;
-        const drawStartX = Math.round(x * forestTilemap.drawTileWidth);
-        const drawEndX = Math.round((x + 1) * forestTilemap.drawTileWidth);
-        const drawStartY = Math.round(y * forestTilemap.drawTileHeight);
-        const drawEndY = Math.round((y + 1) * forestTilemap.drawTileHeight);
-        context.drawImage(
-          forestTilemap.image,
-          sourceX,
-          sourceY,
-          forestTilemap.tileWidth,
-          forestTilemap.tileHeight,
-          drawStartX,
-          drawStartY,
-          Math.max(1, drawEndX - drawStartX),
-          Math.max(1, drawEndY - drawStartY)
-        );
-      }
-    }
-  }
-}
-
-function drawHome() {
-  context.fillStyle = "#5f472b";
-  context.fillRect(0, 0, world.width, world.height);
-
-  context.strokeStyle = "rgba(45, 31, 19, 0.34)";
-  context.lineWidth = 2;
-  for (let x = 24; x < world.width; x += 48) {
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, world.height);
-    context.stroke();
-  }
-
-  context.fillStyle = "#2f2519";
-  context.fillRect(0, 0, world.width, 28);
-  context.fillRect(0, world.height - 28, world.width, 28);
-  context.fillRect(0, 0, 28, world.height);
-  context.fillRect(world.width - 28, 0, 28, world.height);
-
-  context.fillStyle = "#80613a";
-  context.fillRect(96, 96, 150, 86);
-  context.fillStyle = "#f2ead8";
-  context.font = "16px system-ui, sans-serif";
-  context.textAlign = "right";
-  context.fillText("Forest exit", world.width - 36, world.height / 2 - 12);
-}
-
-function drawPlayer(player: Player, isLocal: boolean, frameAtMs: number) {
-  const image = characterImages.get(player.characterId) ?? characterImages.get(DEFAULT_CHARACTER_ID);
-  const animationState = resolveAnimationState(player, isLocal);
-  const layeredShadow = getLayeredSpriteImage(player.characterId, animationState, "shadow");
-  const layeredBody = getLayeredSpriteImage(player.characterId, animationState, "body");
-  const layeredHead = getLayeredSpriteImage(player.characterId, animationState, "head");
-  const spriteImage =
-    getSpriteImage(player.characterId, animationState) ??
-    getSpriteImage(player.characterId, "run") ??
-    getSpriteImage(player.characterId, "idle");
-
-  if (layeredShadow?.complete && layeredBody?.complete && layeredHead?.complete) {
-    const row = resolveDirectionRow(player);
-    const column = resolveFrameColumn(player, animationState, frameAtMs, row);
-    const layers: HTMLImageElement[] = [layeredShadow, layeredBody, layeredHead];
-
-    for (const layerImage of layers) {
-      context.drawImage(
-        layerImage,
-        column * SPRITE_FRAME_SIZE,
-        row * SPRITE_FRAME_SIZE,
-        SPRITE_FRAME_SIZE,
-        SPRITE_FRAME_SIZE,
-        player.x - SPRITE_SIZE / 2,
-        player.y - SPRITE_SIZE / 2,
-        SPRITE_SIZE,
-        SPRITE_SIZE
-      );
-    }
-  } else if (spriteImage?.complete && spriteImage.naturalWidth >= SPRITE_FRAME_SIZE && spriteImage.naturalHeight >= SPRITE_FRAME_SIZE) {
-    const row = resolveDirectionRow(player);
-    const column = resolveFrameColumn(player, animationState, frameAtMs, row);
-
-    context.drawImage(
-      spriteImage,
-      column * SPRITE_FRAME_SIZE,
-      row * SPRITE_FRAME_SIZE,
-      SPRITE_FRAME_SIZE,
-      SPRITE_FRAME_SIZE,
-      player.x - SPRITE_SIZE / 2,
-      player.y - SPRITE_SIZE / 2,
-      SPRITE_SIZE,
-      SPRITE_SIZE
-    );
-  } else if (image?.complete && image.naturalWidth > 0) {
-    context.drawImage(image, player.x - SPRITE_SIZE / 2, player.y - SPRITE_SIZE / 2, SPRITE_SIZE, SPRITE_SIZE);
-  } else {
-    context.fillStyle = "#f5f1e8";
-    context.beginPath();
-    context.arc(player.x, player.y, world.playerRadius, 0, Math.PI * 2);
-    context.fill();
-  }
-
-}
-
-function draw(frameAtMs: number) {
+function draw() {
   context.clearRect(0, 0, world.width, world.height);
   updateOverlayPanels();
   const camera = getCameraCenter();
@@ -1252,23 +896,21 @@ function draw(frameAtMs: number) {
   const viewportBottom = screenToWorldY(camera.y, canvas.height);
 
   context.save();
+  const translateX = Math.round(canvas.width / 2 - camera.x * CAMERA_ZOOM);
+  const translateY = Math.round(canvas.height / 2 - camera.y * CAMERA_ZOOM);
   context.setTransform(
     CAMERA_ZOOM,
     0,
     0,
     CAMERA_ZOOM,
-    canvas.width / 2 - camera.x * CAMERA_ZOOM,
-    canvas.height / 2 - camera.y * CAMERA_ZOOM
+    translateX,
+    translateY
   );
 
-  if (localPlayer?.area === HOME_AREA) {
-    drawHome();
-  } else {
-    drawForestTilemap();
-  }
+  mapRenderer.drawWorld(context, camera, canvas, CAMERA_ZOOM);
 
   for (const player of renderedPlayers.values()) {
-    drawPlayer(player, player.id === localPlayer?.id, frameAtMs);
+    drawPlayer(player, player.id === localPlayer?.id);
   }
   context.restore();
 
@@ -1277,10 +919,10 @@ function draw(frameAtMs: number) {
   context.textAlign = "center";
   for (const player of renderedPlayers.values()) {
     if (
-      player.x < viewportLeft - SPRITE_SIZE ||
-      player.x > viewportRight + SPRITE_SIZE ||
-      player.y < viewportTop - SPRITE_SIZE ||
-      player.y > viewportBottom + SPRITE_SIZE
+      player.x < viewportLeft - world.playerRadius * 2 ||
+      player.x > viewportRight + world.playerRadius * 2 ||
+      player.y < viewportTop - world.playerRadius * 2 ||
+      player.y > viewportBottom + world.playerRadius * 2
     ) {
       continue;
     }
@@ -1288,9 +930,20 @@ function draw(frameAtMs: number) {
     context.fillText(
       player.id === localPlayer?.id ? "You" : player.name,
       worldToScreenX(camera.x, player.x),
-      worldToScreenY(camera.y, player.y - SPRITE_SIZE / 2 - 8)
+      worldToScreenY(camera.y, player.y - world.playerRadius - 8)
     );
   }
+
+  mapRenderer.drawMinimap(context, {
+    x: MINIMAP_MARGIN,
+    y: canvas.height - MINIMAP_HEIGHT - MINIMAP_MARGIN,
+    width: MINIMAP_WIDTH,
+    height: MINIMAP_HEIGHT,
+    camera,
+    canvas,
+    zoom: CAMERA_ZOOM,
+    localPlayer
+  });
 }
 
 function tick(frameAt: number) {
@@ -1299,6 +952,7 @@ function tick(frameAt: number) {
 
   updateLocalPlayer(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
+  updateCamera(deltaSeconds);
 
   if (isFirebaseConfigured && hasJoinedLobby && localPlayer && frameAt - lastSyncAt > SYNC_INTERVAL_MS) {
     lastSyncAt = frameAt;
@@ -1307,7 +961,7 @@ function tick(frameAt: number) {
     });
   }
 
-  draw(frameAt);
+  draw();
   requestAnimationFrame(tick);
 }
 
@@ -1412,81 +1066,11 @@ function normalizeUsername(value: string) {
   return value.trim().toLowerCase();
 }
 
-function readLocalAccounts(): AccountsStore {
-  const raw = localStorage.getItem(LOCAL_ACCOUNTS_KEY);
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as AccountsStore;
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeLocalAccounts(accounts: AccountsStore) {
-  localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(accounts));
-}
-
-async function hashPassword(password: string) {
-  const bytes = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function getStoredAccount(normalizedUsername: string) {
-  if (!isFirebaseConfigured) {
-    return readLocalAccounts()[normalizedUsername] ?? null;
-  }
-
-  await signInPlayer();
-  const snapshot = await get(accountRefByUsername(normalizedUsername));
-  return (snapshot.val() as StoredAccount | null) ?? null;
-}
-
-async function createStoredAccount(username: string, normalizedUsername: string, passwordHash: string) {
-  if (!isFirebaseConfigured) {
-    const accounts = readLocalAccounts();
-    if (accounts[normalizedUsername]) {
-      throw new Error("Username already exists. Sign in instead.");
-    }
-
-    accounts[normalizedUsername] = {
-      username,
-      normalizedUsername,
-      passwordHash,
-      characterId: DEFAULT_CHARACTER_ID,
-      createdAt: Date.now()
-    };
-    writeLocalAccounts(accounts);
-    return;
-  }
-
-  const uid = await signInPlayer();
-  const existing = await get(accountRefByUsername(normalizedUsername));
-  if (existing.exists()) {
-    throw new Error("Username already exists. Sign in instead.");
-  }
-
-  await set(accountRefByUsername(normalizedUsername), {
-    username,
-    normalizedUsername,
-    passwordHash,
-    characterId: DEFAULT_CHARACTER_ID,
-    createdAt: serverTimestamp(),
-    lastLoginAt: serverTimestamp(),
-    uid
-  } satisfies StoredAccount);
-}
-
 function setAuthPending(pending: boolean) {
   signInUsername.disabled = pending;
   signInPassword.disabled = pending;
   createUsername.disabled = pending;
+  createEmail.disabled = pending;
   createPassword.disabled = pending;
   signInTab.disabled = pending;
   createTab.disabled = pending;
@@ -1511,6 +1095,10 @@ function setAuthMode(mode: "signin" | "create") {
 async function joinLobby(playerName: string) {
   if (!isFirebaseConfigured) {
     localPlayer = makePlayer(OFFLINE_PLAYER_ID, playerName);
+    localVelocityX = 0;
+    localVelocityY = 0;
+    cameraX = localPlayer.x;
+    cameraY = localPlayer.y;
     players.clear();
     renderedPlayers.clear();
     players.set(localPlayer.id, localPlayer);
@@ -1536,6 +1124,10 @@ async function joinLobby(playerName: string) {
   }
 
   localPlayer = makePlayer(playerId, playerName);
+  localVelocityX = 0;
+  localVelocityY = 0;
+  cameraX = localPlayer.x;
+  cameraY = localPlayer.y;
   players.set(localPlayer.id, localPlayer);
   renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
@@ -1609,7 +1201,12 @@ signInForm.addEventListener("submit", (event) => {
   const normalizedUsername = normalizeUsername(username);
   const password = signInPassword.value;
 
-  if (!normalizedUsername || !password) {
+  if (!isFirebaseConfigured) {
+    menuError.textContent = "Firebase is required for sign in. Configure .env.local first.";
+    return;
+  }
+
+  if (!username || !password) {
     menuError.textContent = "Enter your username and password.";
     signInUsername.focus();
     return;
@@ -1618,19 +1215,19 @@ signInForm.addEventListener("submit", (event) => {
   menuError.textContent = "";
   setAuthPending(true);
 
-  void hashPassword(password)
-    .then(async (passwordHash) => {
-      const account = await getStoredAccount(normalizedUsername);
-      if (!account || account.passwordHash !== passwordHash) {
-        throw new Error("Invalid username or password.");
+  void signInPlayer()
+    .then(async () => {
+      const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
+      const usernameIndexRecord = usernameIndexSnapshot.val() as UsernameIndexRecord | null;
+      if (!usernameIndexRecord?.email) {
+        throw new Error("Unknown username.");
       }
 
-      selectedCharacterId = account.characterId ?? DEFAULT_CHARACTER_ID;
-      if (isFirebaseConfigured) {
-        await set(accountLastLoginRef(normalizedUsername), serverTimestamp());
-      }
+      const displayName = await signInFirebaseAccount(usernameIndexRecord.email, password);
+      await set(ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}/lastLoginAt`), serverTimestamp());
+      selectedCharacterId = DEFAULT_CHARACTER_ID;
       signInPassword.value = "";
-      return joinLobby(account.username);
+      return joinLobby(displayName || usernameIndexRecord.username || username);
     })
     .catch((error) => {
       menuError.textContent = `Could not sign in: ${error.message}`;
@@ -1645,10 +1242,16 @@ createForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const username = createUsername.value.trim();
   const normalizedUsername = normalizeUsername(username);
+  const email = createEmail.value.trim();
   const password = createPassword.value;
 
-  if (!normalizedUsername || !password) {
-    menuError.textContent = "Choose a username and password.";
+  if (!isFirebaseConfigured) {
+    menuError.textContent = "Firebase is required for account creation. Configure .env.local first.";
+    return;
+  }
+
+  if (!username || !email || !password) {
+    menuError.textContent = "Choose a username, email, and password.";
     createUsername.focus();
     return;
   }
@@ -1656,6 +1259,12 @@ createForm.addEventListener("submit", (event) => {
   if (normalizedUsername.length < 3) {
     menuError.textContent = "Username must be at least 3 characters.";
     createUsername.focus();
+    return;
+  }
+
+  if (!email.includes("@")) {
+    menuError.textContent = "Enter a valid email address.";
+    createEmail.focus();
     return;
   }
 
@@ -1668,10 +1277,24 @@ createForm.addEventListener("submit", (event) => {
   menuError.textContent = "";
   setAuthPending(true);
 
-  void hashPassword(password)
-    .then(async (passwordHash) => {
-      await createStoredAccount(username, normalizedUsername, passwordHash);
+  void signInPlayer()
+    .then(async () => {
+      const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
+      if (usernameIndexSnapshot.exists()) {
+        throw new Error("Username already exists. Sign in instead.");
+      }
+
+      const displayName = await createFirebaseAccount(username, email, password);
+      const uid = await signInPlayer();
+      await set(usernameIndexRef(normalizedUsername), {
+        email,
+        username: displayName || username,
+        uid,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp()
+      } satisfies UsernameIndexRecord);
       createPassword.value = "";
+      createEmail.value = "";
       signInUsername.value = username;
       signInPassword.value = "";
       setAuthMode("signin");
@@ -1686,7 +1309,6 @@ createForm.addEventListener("submit", (event) => {
 });
 
 setAuthMode("signin");
-void loadForestTilemap();
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");

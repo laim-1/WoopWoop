@@ -40,6 +40,7 @@ body {
     radial-gradient(circle at 20% 15%, rgba(114, 97, 55, 0.28), transparent 24rem),
     radial-gradient(circle at 80% 75%, rgba(53, 83, 44, 0.28), transparent 28rem),
     linear-gradient(135deg, #172312, #26381d 52%, #1b2817);
+  overflow: hidden;
 }
 
 .menu {
@@ -315,12 +316,14 @@ body {
 }
 
 #game {
-  width: min(100vw, 1024px);
-  height: min(100vh, 768px);
-  max-height: 100vh;
-  border: 1px solid rgba(196, 171, 119, 0.24);
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
   background: #314529;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.4);
+  box-shadow: none;
 }
 
 .hud {
