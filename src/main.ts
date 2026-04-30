@@ -286,6 +286,38 @@ const chatInput = chatInputElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
+function getAuthErrorMessage(error: unknown, action: "signin" | "create"): string {
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+
+  if (code === "auth/admin-restricted-operation") {
+    const domain = window.location.hostname;
+    return action === "create"
+      ? `Account creation is blocked by Firebase for this app/domain (${domain}).`
+      : `Sign-in is blocked by Firebase for this app/domain (${domain}).`;
+  }
+
+  if (code === "auth/operation-not-allowed") {
+    return "Email/password auth is disabled in Firebase for this project.";
+  }
+
+  if (code === "auth/invalid-api-key") {
+    return "Firebase API key is invalid for this deployment.";
+  }
+
+  if (code === "auth/network-request-failed") {
+    return "Network error reaching Firebase. Try again.";
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return "Unexpected authentication error.";
+}
+
 function resizeCanvasToViewport() {
   const nextWidth = Math.max(1, Math.floor(window.innerWidth));
   const nextHeight = Math.max(1, Math.floor(window.innerHeight));
@@ -1236,8 +1268,9 @@ signInForm.addEventListener("submit", (event) => {
     await joinLobby(displayName || usernameIndexRecord.username || username);
   })()
     .catch((error) => {
-      menuError.textContent = `Could not sign in: ${error.message}`;
-      setStatus(`Sign in failed: ${error.message}`, "error");
+      const message = getAuthErrorMessage(error, "signin");
+      menuError.textContent = `Could not sign in: ${message}`;
+      setStatus(`Sign in failed: ${message}`, "error");
     })
     .finally(() => {
       setAuthPending(false);
@@ -1305,7 +1338,8 @@ createForm.addEventListener("submit", (event) => {
     menuError.textContent = "Account created. Sign in to play.";
   })()
     .catch((error) => {
-      menuError.textContent = `Could not create account: ${error.message}`;
+      const message = getAuthErrorMessage(error, "create");
+      menuError.textContent = `Could not create account: ${message}`;
     })
     .finally(() => {
       setAuthPending(false);
