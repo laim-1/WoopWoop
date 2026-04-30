@@ -37,10 +37,6 @@ if (!isFirebaseConfigured) {
   console.warn(
     `Missing Firebase config values: ${missingConfig.join(", ")}. Add them to .env.local for multiplayer.`,
   );
-} else if (import.meta.env.PROD) {
-  console.info(
-    `[Firebase] Project ${firebaseConfig.projectId} on ${window.location.hostname} using auth domain ${firebaseConfig.authDomain}`,
-  );
 }
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
