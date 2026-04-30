@@ -110,23 +110,17 @@ body {
 
 .character-option {
   display: grid;
-  gap: 0.35rem;
   place-items: center;
   border: 2px solid rgba(196, 171, 119, 0.28);
   border-radius: 1rem;
-  padding: 0.5rem;
+  min-height: 3rem;
+  padding: 0.5rem 0.4rem;
   background: rgba(24, 36, 20, 0.62);
   color: #f2ead8;
   cursor: pointer;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 800;
-}
-
-.character-option img {
-  width: 4.5rem;
-  height: 4.5rem;
-  object-fit: contain;
 }
 
 .character-option.is-selected {
@@ -441,6 +435,40 @@ body {
   outline: none;
 }
 
+.character-drawer {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 0.4rem;
+  width: min(30rem, calc(100vw - 2rem));
+  z-index: 15;
+}
+
+.character-drawer-toggle {
+  min-height: 2.2rem;
+  padding: 0 1rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 999px;
+  background: rgba(38, 50, 31, 0.88);
+  color: #f2ead8;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.character-drawer-content {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid rgba(196, 171, 119, 0.24);
+  border-radius: 1rem;
+  background: rgba(38, 50, 31, 0.82);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+}
+
 .lobby-panel ul {
   display: grid;
   gap: 0.5rem;
@@ -484,10 +512,12 @@ body {
 @media (max-width: 760px) {
   .hud,
   .lobby-panel,
-  .chat-panel {
+  .chat-panel,
+  .character-drawer {
     position: static;
     width: min(100vw - 2rem, 28rem);
     margin: 1rem;
+    transform: none;
   }
 
   .shell {

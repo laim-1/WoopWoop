@@ -86,22 +86,7 @@
       ]
     }
   ],
-  "blockedZones": [
-    {
-      "type": "ellipse",
-      "x": 2400,
-      "y": 5200,
-      "radiusX": 1250,
-      "radiusY": 920
-    },
-    {
-      "type": "ellipse",
-      "x": 6400,
-      "y": 840,
-      "radiusX": 1750,
-      "radiusY": 520
-    }
-  ],
+  "blockedZones": [],
   "spawnZones": [
     {
       "x": 4150,

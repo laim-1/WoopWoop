@@ -182,6 +182,15 @@ app.innerHTML = `
       </form>
     </section>
 
+    <section class="character-drawer is-hidden" id="character-drawer">
+      <button type="button" class="character-drawer-toggle" id="character-drawer-toggle" aria-expanded="false">
+        ▲ Character
+      </button>
+      <div class="character-drawer-content is-hidden" id="character-drawer-content">
+        <div class="character-picker" id="character-picker"></div>
+      </div>
+    </section>
+
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
 `;
@@ -212,6 +221,10 @@ const chatPanelElement = document.querySelector<HTMLElement>("#chat-panel");
 const chatMessagesElement = document.querySelector<HTMLUListElement>("#chat-messages");
 const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
 const chatInputElement = document.querySelector<HTMLInputElement>("#chat-input");
+const characterDrawerElement = document.querySelector<HTMLElement>("#character-drawer");
+const characterDrawerToggleElement = document.querySelector<HTMLButtonElement>("#character-drawer-toggle");
+const characterDrawerContentElement = document.querySelector<HTMLElement>("#character-drawer-content");
+const characterPickerElement = document.querySelector<HTMLDivElement>("#character-picker");
 
 if (
   !canvasElement ||
@@ -239,7 +252,11 @@ if (
   !chatPanelElement ||
   !chatMessagesElement ||
   !chatFormElement ||
-  !chatInputElement
+  !chatInputElement ||
+  !characterDrawerElement ||
+  !characterDrawerToggleElement ||
+  !characterDrawerContentElement ||
+  !characterPickerElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -276,6 +293,10 @@ const chatPanel = chatPanelElement;
 const chatMessages = chatMessagesElement;
 const chatForm = chatFormElement;
 const chatInput = chatInputElement;
+const characterDrawer = characterDrawerElement;
+const characterDrawerToggle = characterDrawerToggleElement;
+const characterDrawerContent = characterDrawerContentElement;
+const characterPicker = characterPickerElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
@@ -331,7 +352,7 @@ window.addEventListener("resize", () => {
 const world = {
   width: gameMap.world.width,
   height: gameMap.world.height,
-  playerRadius: 24
+  playerRadius: 48
 };
 
 const DEVTOOLS_PASSWORD = "0310";
@@ -374,6 +395,7 @@ let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
 let spawnPointIndex = 0;
+let characterDrawerOpen = false;
 
 function screenToWorldX(cameraX: number, screenX: number) {
   return cameraX + (screenX - canvas.width / 2) / CAMERA_ZOOM;
@@ -543,6 +565,29 @@ function showGame() {
 
 function updateOverlayPanels() {
   chatPanel.classList.toggle("is-hidden", !hasJoinedLobby || !isFirebaseConfigured);
+  characterDrawer.classList.toggle("is-hidden", !hasJoinedLobby);
+}
+
+function renderCharacterPicker() {
+  characterPicker.innerHTML = "";
+  for (const character of characters) {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "character-option";
+    if (character.id === selectedCharacterId) {
+      option.classList.add("is-selected");
+    }
+    option.dataset.characterId = character.id;
+    option.textContent = character.label;
+    characterPicker.append(option);
+  }
+}
+
+function setCharacterDrawerOpen(open: boolean) {
+  characterDrawerOpen = open;
+  characterDrawerContent.classList.toggle("is-hidden", !open);
+  characterDrawerToggle.textContent = `${open ? "▼" : "▲"} Character`;
+  characterDrawerToggle.setAttribute("aria-expanded", String(open));
 }
 
 function renderPlayersList() {
@@ -847,7 +892,31 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const handForwardOffsetB = -armSwing * bodyRadius * 0.24;
   const handBaseX = player.x + facingX * handForward;
   const handBaseY = player.y + facingY * handForward;
-  const outlineColor = "#323254";
+  const paletteByCharacter: Record<CharacterId, { body: string; bodyRemote: string; hands: string; handsRemote: string; outline: string }> = {
+    boybrown: {
+      body: "#f3d8b4",
+      bodyRemote: "#e8c8a4",
+      hands: "#dfb68f",
+      handsRemote: "#d2a983",
+      outline: "#5b3d2e"
+    },
+    girlblonde: {
+      body: "#f6e2c7",
+      bodyRemote: "#ead4b7",
+      hands: "#ebd0ae",
+      handsRemote: "#ddc29f",
+      outline: "#69523d"
+    },
+    girlbrown: {
+      body: "#d8b28c",
+      bodyRemote: "#cca580",
+      hands: "#c2936a",
+      handsRemote: "#b58660",
+      outline: "#4b3324"
+    }
+  };
+  const palette = paletteByCharacter[player.characterId] ?? paletteByCharacter[DEFAULT_CHARACTER_ID];
+  const outlineColor = palette.outline;
   const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
   const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
   const eyeForward = bodyRadius * 0.34;
@@ -861,7 +930,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.fill();
 
   // Draw hands first so the body overlaps them.
-  context.fillStyle = isLocal ? "#d8c9aa" : "#cdbb97";
+  context.fillStyle = isLocal ? palette.hands : palette.handsRemote;
   context.beginPath();
   context.arc(
     handBaseX + sideX * handSide + facingX * handForwardOffsetA,
@@ -887,7 +956,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.stroke();
 
   // Body last so it sits above the hands.
-  context.fillStyle = isLocal ? "#f5f1e8" : "#e7deca";
+  context.fillStyle = isLocal ? palette.body : palette.bodyRemote;
   context.beginPath();
   context.arc(player.x, player.y, bodyRadius, 0, Math.PI * 2);
   context.fill();
@@ -1207,6 +1276,32 @@ chatForm.addEventListener("submit", (event) => {
   void sendChatMessage();
 });
 
+characterDrawerToggle.addEventListener("click", () => {
+  setCharacterDrawerOpen(!characterDrawerOpen);
+});
+
+characterPicker.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const option = target.closest<HTMLButtonElement>(".character-option");
+  const nextCharacterId = option?.dataset.characterId as CharacterId | undefined;
+  if (!nextCharacterId || !characters.some((character) => character.id === nextCharacterId)) {
+    return;
+  }
+
+  selectedCharacterId = nextCharacterId;
+  if (localPlayer) {
+    localPlayer.characterId = nextCharacterId;
+    if (isFirebaseConfigured) {
+      void syncLocalPlayer();
+    }
+  }
+  renderCharacterPicker();
+});
+
 signInTab.addEventListener("click", () => {
   setAuthMode("signin");
 });
@@ -1307,6 +1402,8 @@ createForm.addEventListener("submit", (event) => {
 });
 
 setAuthMode("signin");
+renderCharacterPicker();
+setCharacterDrawerOpen(false);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
