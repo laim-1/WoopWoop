@@ -66,8 +66,8 @@ npm install
 npm run dev
 ```
 
-Open the local URL in two browser tabs. Each tab signs in anonymously and writes
-its player to `rooms/lobby/players/{uid}`.
+Open the local URL in two browser tabs. Sign in with two different accounts, then
+each tab writes its player to `rooms/lobby/players/{uid}`.
 
 ## Art assets
 

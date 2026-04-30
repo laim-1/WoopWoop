@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import type { FirebaseOptions } from "firebase/app";
-import { createUserWithEmailAndPassword, getAuth, signInAnonymously, signInWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { getDatabase } from "firebase/database";
 
 const envConfig: FirebaseOptions = {
@@ -44,23 +44,22 @@ const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const database = getDatabase(app, firebaseConfig.databaseURL);
 
-export async function signInPlayer(): Promise<string> {
-  if (auth.currentUser) {
-    return auth.currentUser.uid;
-  }
+type AuthResult = {
+  uid: string;
+  displayName: string;
+};
 
-  const credential = await signInAnonymously(auth);
-  return credential.user.uid;
-}
-
-export async function createFirebaseAccount(username: string, email: string, password: string): Promise<string> {
+export async function createFirebaseAccount(username: string, email: string, password: string): Promise<AuthResult> {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
   const displayName = username.trim();
   await updateProfile(credential.user, { displayName });
-  return displayName;
+  return { uid: credential.user.uid, displayName };
 }
 
-export async function signInFirebaseAccount(email: string, password: string): Promise<string> {
+export async function signInFirebaseAccount(email: string, password: string): Promise<AuthResult> {
   const credential = await signInWithEmailAndPassword(auth, email, password);
-  return credential.user.displayName?.trim() || email;
+  return {
+    uid: credential.user.uid,
+    displayName: credential.user.displayName?.trim() || email
+  };
 }

@@ -1,6 +1,6 @@
 import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
-import { createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount, signInPlayer } from "./firebase";
+import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount } from "./firebase";
 import { createGameMapRenderer, loadGameMap } from "./map";
 import "./styles.css";
 
@@ -1116,7 +1116,10 @@ async function joinLobby(playerName: string) {
     return;
   }
 
-  const playerId = await signInPlayer();
+  const playerId = auth.currentUser?.uid;
+  if (!playerId) {
+    throw new Error("Sign in with email/password first.");
+  }
   await loadKickedPlayers();
 
   if (kickedPlayerIds.has(playerId)) {
@@ -1171,9 +1174,13 @@ devtoolsForm.addEventListener("submit", (event) => {
   devtoolsPanel.classList.remove("is-hidden");
   devtoolsMessage.textContent = "Devtools unlocked.";
 
-  void signInPlayer()
-    .then(async () => {
-      await loadKickedPlayers(true);
+  if (!auth.currentUser) {
+    devtoolsMessage.textContent = "Sign in first to unlock devtools.";
+    return;
+  }
+
+  void loadKickedPlayers(true)
+    .then(() => {
       subscribeToLobby();
       subscribeToKickedPlayers();
     })
@@ -1215,20 +1222,19 @@ signInForm.addEventListener("submit", (event) => {
   menuError.textContent = "";
   setAuthPending(true);
 
-  void signInPlayer()
-    .then(async () => {
-      const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
-      const usernameIndexRecord = usernameIndexSnapshot.val() as UsernameIndexRecord | null;
-      if (!usernameIndexRecord?.email) {
-        throw new Error("Unknown username.");
-      }
+  void (async () => {
+    const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
+    const usernameIndexRecord = usernameIndexSnapshot.val() as UsernameIndexRecord | null;
+    if (!usernameIndexRecord?.email) {
+      throw new Error("Unknown username.");
+    }
 
-      const displayName = await signInFirebaseAccount(usernameIndexRecord.email, password);
-      await set(ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}/lastLoginAt`), serverTimestamp());
-      selectedCharacterId = DEFAULT_CHARACTER_ID;
-      signInPassword.value = "";
-      return joinLobby(displayName || usernameIndexRecord.username || username);
-    })
+    const { displayName } = await signInFirebaseAccount(usernameIndexRecord.email, password);
+    await set(ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}/lastLoginAt`), serverTimestamp());
+    selectedCharacterId = DEFAULT_CHARACTER_ID;
+    signInPassword.value = "";
+    await joinLobby(displayName || usernameIndexRecord.username || username);
+  })()
     .catch((error) => {
       menuError.textContent = `Could not sign in: ${error.message}`;
       setStatus(`Sign in failed: ${error.message}`, "error");
@@ -1277,29 +1283,27 @@ createForm.addEventListener("submit", (event) => {
   menuError.textContent = "";
   setAuthPending(true);
 
-  void signInPlayer()
-    .then(async () => {
-      const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
-      if (usernameIndexSnapshot.exists()) {
-        throw new Error("Username already exists. Sign in instead.");
-      }
+  void (async () => {
+    const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
+    if (usernameIndexSnapshot.exists()) {
+      throw new Error("Username already exists. Sign in instead.");
+    }
 
-      const displayName = await createFirebaseAccount(username, email, password);
-      const uid = await signInPlayer();
-      await set(usernameIndexRef(normalizedUsername), {
-        email,
-        username: displayName || username,
-        uid,
-        createdAt: serverTimestamp(),
-        lastLoginAt: serverTimestamp()
-      } satisfies UsernameIndexRecord);
-      createPassword.value = "";
-      createEmail.value = "";
-      signInUsername.value = username;
-      signInPassword.value = "";
-      setAuthMode("signin");
-      menuError.textContent = "Account created. Sign in to play.";
-    })
+    const { displayName, uid } = await createFirebaseAccount(username, email, password);
+    await set(usernameIndexRef(normalizedUsername), {
+      email,
+      username: displayName || username,
+      uid,
+      createdAt: serverTimestamp(),
+      lastLoginAt: serverTimestamp()
+    } satisfies UsernameIndexRecord);
+    createPassword.value = "";
+    createEmail.value = "";
+    signInUsername.value = username;
+    signInPassword.value = "";
+    setAuthMode("signin");
+    menuError.textContent = "Account created. Sign in to play.";
+  })()
     .catch((error) => {
       menuError.textContent = `Could not create account: ${error.message}`;
     })
