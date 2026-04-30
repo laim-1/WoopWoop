@@ -550,15 +550,6 @@ function drawResourceNode(node: ResourceNode) {
     context.fillStyle = node.biome === "mountain" ? "#ffffff" : "#79a86a";
     context.fill();
 
-    // Trunk marker near the lower center (actual blocking zone).
-    context.beginPath();
-    context.ellipse(0, node.radius * 0.22, node.radius * 0.2, node.radius * 0.15, 0, 0, Math.PI * 2);
-    context.fillStyle = "#6a4a2e";
-    context.fill();
-    context.strokeStyle = "#4f3621";
-    context.lineWidth = 2;
-    context.stroke();
-
     context.strokeStyle = node.biome === "mountain" ? "#a9bac6" : "#355737";
     context.lineWidth = 3;
     context.stroke();
