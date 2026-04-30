@@ -1322,21 +1322,28 @@ function updateRenderedPlayers(deltaSeconds: number) {
 
 function drawPlayer(player: Player, isLocal: boolean) {
   const bodyRadius = world.playerRadius;
-  const handRadius = Math.max(5, Math.round(bodyRadius * 0.32));
+  const handRadius = Math.max(5, Math.round(bodyRadius * 0.28));
+  const footRadius = Math.max(5, Math.round(bodyRadius * 0.32));
+  const handGap = Math.max(4, Math.round(bodyRadius * 0.1));
   const facingLength = Math.max(1, Math.hypot(player.facingX, player.facingY));
   const facingX = player.facingX / facingLength;
   const facingY = player.facingY / facingLength;
   const sideX = -facingY;
   const sideY = facingX;
   const hasLocalInput = keys.has("KeyW") || keys.has("KeyA") || keys.has("KeyS") || keys.has("KeyD");
-  const animateArms = isLocal ? hasLocalInput : player.moving;
-  const armSwing = animateArms ? Math.sin(player.step * 5.2) : 0;
-  const handForward = bodyRadius * 0.66;
-  const handSide = bodyRadius * 0.52;
-  const handForwardOffsetA = armSwing * bodyRadius * 0.24;
-  const handForwardOffsetB = -armSwing * bodyRadius * 0.24;
-  const handBaseX = player.x + facingX * handForward;
-  const handBaseY = player.y + facingY * handForward;
+  const animateFeet = isLocal ? hasLocalInput : player.moving;
+  const footSwing = animateFeet ? Math.sin(player.step * 5.2) : 0;
+  const footForward = bodyRadius * 0.66;
+  const footSide = bodyRadius * 0.52;
+  const footForwardOffsetA = footSwing * bodyRadius * 0.24;
+  const footForwardOffsetB = -footSwing * bodyRadius * 0.24;
+  const footBaseX = player.x + facingX * footForward;
+  const footBaseY = player.y + facingY * footForward;
+  const handOffset = bodyRadius + handRadius + handGap;
+  const handLeftX = player.x + sideX * handOffset;
+  const handLeftY = player.y + sideY * handOffset;
+  const handRightX = player.x - sideX * handOffset;
+  const handRightY = player.y - sideY * handOffset;
   const outlineColor = "#323254";
   const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
   const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
@@ -1350,13 +1357,13 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.ellipse(player.x, player.y + bodyRadius * 0.72, bodyRadius * 0.9, bodyRadius * 0.36, 0, 0, Math.PI * 2);
   context.fill();
 
-  // Draw hands first so the body overlaps them.
+  // Draw feet first so the body overlaps them.
   context.fillStyle = isLocal ? "#ffffff" : "#f2f2f2";
   context.beginPath();
   context.arc(
-    handBaseX + sideX * handSide + facingX * handForwardOffsetA,
-    handBaseY + sideY * handSide + facingY * handForwardOffsetA,
-    handRadius,
+    footBaseX + sideX * footSide + facingX * footForwardOffsetA,
+    footBaseY + sideY * footSide + facingY * footForwardOffsetA,
+    footRadius,
     0,
     Math.PI * 2
   );
@@ -1367,12 +1374,23 @@ function drawPlayer(player: Player, isLocal: boolean) {
 
   context.beginPath();
   context.arc(
-    handBaseX - sideX * handSide + facingX * handForwardOffsetB,
-    handBaseY - sideY * handSide + facingY * handForwardOffsetB,
-    handRadius,
+    footBaseX - sideX * footSide + facingX * footForwardOffsetB,
+    footBaseY - sideY * footSide + facingY * footForwardOffsetB,
+    footRadius,
     0,
     Math.PI * 2
   );
+  context.fill();
+  context.stroke();
+
+  // Draw side hands with a small gap from the body.
+  context.beginPath();
+  context.arc(handLeftX, handLeftY, handRadius, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+
+  context.beginPath();
+  context.arc(handRightX, handRightY, handRadius, 0, Math.PI * 2);
   context.fill();
   context.stroke();
 
