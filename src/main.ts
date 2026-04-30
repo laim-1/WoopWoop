@@ -74,6 +74,17 @@ type PeeParticle = {
   size: number;
 };
 
+type ResourceHitParticle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  size: number;
+};
+
 type PlayerColorPalette = {
   body: string;
   hands: string;
@@ -194,6 +205,7 @@ app.innerHTML = `
         <h1>Main Plaza</h1>
       </div>
       <div class="status" id="status">Connecting...</div>
+      <div class="hud-resources" id="hud-resources">Wood: 0 | Stone: 0 | Berries: 0</div>
     </section>
 
     <aside class="lobby-panel is-hidden" id="lobby-panel">
@@ -250,6 +262,7 @@ const devtoolsPanelElement = document.querySelector<HTMLElement>("#devtools-pane
 const devtoolsMessageElement = document.querySelector<HTMLParagraphElement>("#devtools-message");
 const devtoolsPlayersListElement = document.querySelector<HTMLUListElement>("#devtools-players-list");
 const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
+const hudResourcesElement = document.querySelector<HTMLDivElement>("#hud-resources");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
@@ -288,6 +301,7 @@ if (
   !devtoolsMessageElement ||
   !devtoolsPlayersListElement ||
   !gameHudElement ||
+  !hudResourcesElement ||
   !lobbyPanelElement ||
   !playerCountElement ||
   !playersListElement ||
@@ -334,6 +348,7 @@ const devtoolsPanel = devtoolsPanelElement;
 const devtoolsMessage = devtoolsMessageElement;
 const devtoolsPlayersList = devtoolsPlayersListElement;
 const gameHud = gameHudElement;
+const hudResources = hudResourcesElement;
 const lobbyPanel = lobbyPanelElement;
 const playerCount = playerCountElement;
 const playersList = playersListElement;
@@ -403,6 +418,7 @@ const PUNCH_DURATION_MS = 210;
 const PUNCH_REACH = 52;
 const PUNCH_EXTEND_PHASE = 0.34;
 const PEE_PARTICLES_PER_SECOND = 48;
+const RESOURCE_HIT_PARTICLES = 11;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -437,6 +453,7 @@ const inventory: ResourceInventory = {
   berries: 0
 };
 const peeParticles: PeeParticle[] = [];
+const resourceHitParticles: ResourceHitParticle[] = [];
 let peeEmissionCarry = 0;
 let paintPanelOpen = false;
 const localPlayerColors: PlayerColorPalette = {
@@ -721,6 +738,7 @@ function tryAttackResource() {
 
   lastAttackAt = now;
   target.hp -= 1;
+  emitResourceHitParticles(target);
   if (target.hp > 0) {
     return;
   }
@@ -733,6 +751,29 @@ function tryAttackResource() {
     inventory.berries += 1;
   }
   updateResourcePanel();
+}
+
+function emitResourceHitParticles(node: ResourceNode) {
+  const colorByType: Record<ResourceNodeType, string> = {
+    tree: "#c38a56",
+    rock: "#c6d0d8",
+    berries: "#d94e66"
+  };
+
+  for (let i = 0; i < RESOURCE_HIT_PARTICLES; i += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 55 + Math.random() * 115;
+    resourceHitParticles.push({
+      x: node.x + (Math.random() - 0.5) * node.radius * 0.35,
+      y: node.y + (Math.random() - 0.5) * node.radius * 0.35,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 24,
+      life: 0.24 + Math.random() * 0.22,
+      maxLife: 0.24 + Math.random() * 0.22,
+      color: colorByType[node.type],
+      size: 2.5 + Math.random() * 2.6
+    });
+  }
 }
 
 function triggerPunch() {
@@ -864,7 +905,9 @@ function setPaintPanelOpen(open: boolean) {
 }
 
 function updateResourcePanel() {
-  resourceCounts.textContent = `Wood: ${inventory.wood} | Stone: ${inventory.stone} | Berries: ${inventory.berries}`;
+  const value = `Wood: ${inventory.wood} | Stone: ${inventory.stone} | Berries: ${inventory.berries}`;
+  resourceCounts.textContent = value;
+  hudResources.textContent = value;
 }
 
 function getBiomeAtPosition(x: number, y: number): ResourceBiome {
@@ -900,9 +943,9 @@ function spawnResourceNode(
     berries: 30
   };
   const hpByType: Record<ResourceNodeType, number> = {
-    tree: 4,
-    rock: 5,
-    berries: 3
+    tree: 10,
+    rock: 12,
+    berries: 8
   };
   const radius = radiusByType[type];
   const tries = 10;
@@ -1295,12 +1338,41 @@ function updatePeeParticles(deltaSeconds: number) {
   }
 }
 
+function updateResourceHitParticles(deltaSeconds: number) {
+  for (let i = resourceHitParticles.length - 1; i >= 0; i -= 1) {
+    const particle = resourceHitParticles[i];
+    particle.life -= deltaSeconds;
+    if (particle.life <= 0) {
+      resourceHitParticles.splice(i, 1);
+      continue;
+    }
+    particle.vx *= Math.exp(-2.4 * deltaSeconds);
+    particle.vy *= Math.exp(-2.2 * deltaSeconds);
+    particle.vy += 120 * deltaSeconds;
+    particle.x += particle.vx * deltaSeconds;
+    particle.y += particle.vy * deltaSeconds;
+  }
+}
+
 function drawPeeParticles() {
   for (const particle of peeParticles) {
     const alpha = Math.max(0, particle.life / Math.max(0.001, particle.maxLife));
     context.fillStyle = `rgba(248, 219, 82, ${0.25 + alpha * 0.65})`;
     context.beginPath();
     context.arc(particle.x, particle.y, particle.size * (0.6 + alpha * 0.4), 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+function drawResourceHitParticles() {
+  for (const particle of resourceHitParticles) {
+    const alpha = Math.max(0, particle.life / Math.max(0.001, particle.maxLife));
+    const hexAlpha = Math.round((0.35 + alpha * 0.6) * 255)
+      .toString(16)
+      .padStart(2, "0");
+    context.fillStyle = `${particle.color}${hexAlpha}`;
+    context.beginPath();
+    context.arc(particle.x, particle.y, particle.size * (0.65 + alpha * 0.35), 0, Math.PI * 2);
     context.fill();
   }
 }
@@ -1501,6 +1573,7 @@ function draw() {
     }
     drawResourceNode(node);
   }
+  drawResourceHitParticles();
   drawPeeParticles();
   context.restore();
 
@@ -1541,6 +1614,7 @@ function tick(frameAt: number) {
   lastFrameAt = frameAt;
 
   updateLocalPlayer(deltaSeconds);
+  updateResourceHitParticles(deltaSeconds);
   updatePeeParticles(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
   updateCamera(deltaSeconds);
