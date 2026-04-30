@@ -491,7 +491,7 @@ window.addEventListener("keydown", (event) => {
   } else if (event.code === "KeyE" || event.code === "Space") {
     tryAttackResource();
     event.preventDefault();
-  } else if (["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight"].includes(event.code)) {
+  } else if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "ShiftLeft", "ShiftRight"].includes(event.code)) {
     keys.add(event.code);
 
     if (event.code.startsWith("Key")) {
