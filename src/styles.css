@@ -78,6 +78,29 @@ body {
   color: #d8c9aa;
 }
 
+.auth-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.auth-switch button {
+  min-height: 2.5rem;
+  border: 1px solid rgba(196, 171, 119, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(24, 36, 20, 0.72);
+  color: #d8c9aa;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-switch button.is-active {
+  border-color: rgba(185, 213, 138, 0.8);
+  background: rgba(91, 127, 67, 0.35);
+  color: #f2ead8;
+}
+
 .character-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

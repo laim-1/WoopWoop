@@ -3,7 +3,7 @@ import type { FirebaseOptions } from "firebase/app";
 import { getAuth, signInAnonymously } from "firebase/auth";
 import { getDatabase } from "firebase/database";
 
-const firebaseConfig: FirebaseOptions = {
+const envConfig: FirebaseOptions = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
@@ -13,20 +13,36 @@ const firebaseConfig: FirebaseOptions = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const missingConfig = Object.entries(firebaseConfig)
+const missingConfig = Object.entries(envConfig)
   .filter(([, value]) => !value)
   .map(([key]) => key);
 
-if (missingConfig.length > 0) {
-  throw new Error(
-    `Missing Firebase config values: ${missingConfig.join(", ")}. Add them to .env.local.`,
+export const isFirebaseConfigured = missingConfig.length === 0;
+
+// Allow the app shell to load even when .env.local is missing.
+// Network actions will still fail until real Firebase values are added.
+const firebaseConfig: FirebaseOptions = isFirebaseConfigured
+  ? envConfig
+  : {
+      apiKey: "dev-missing-config",
+      authDomain: "dev-missing-config.firebaseapp.com",
+      databaseURL: "https://dev-missing-config-default-rtdb.firebaseio.com",
+      projectId: "dev-missing-config",
+      storageBucket: "dev-missing-config.appspot.com",
+      messagingSenderId: "000000000000",
+      appId: "1:000000000000:web:devmissingconfig",
+    };
+
+if (!isFirebaseConfigured) {
+  console.warn(
+    `Missing Firebase config values: ${missingConfig.join(", ")}. Add them to .env.local for multiplayer.`,
   );
 }
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const database = getDatabase(app);
+export const database = getDatabase(app, firebaseConfig.databaseURL);
 
 export async function signInPlayer(): Promise<string> {
   const credential = await signInAnonymously(auth);
