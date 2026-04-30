@@ -14,7 +14,7 @@
       "feather": 520
     },
     {
-      "biome": "ocean",
+      "biome": "desert",
       "shape": "rect",
       "x": 0,
       "y": 3800,
@@ -23,7 +23,7 @@
       "feather": 420
     },
     {
-      "biome": "desert",
+      "biome": "ocean",
       "shape": "rect",
       "x": 5300,
       "y": 3800,

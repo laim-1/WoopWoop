@@ -117,95 +117,33 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function colorWithShift(hexColor: string, amount: number) {
-  const value = hexColor.replace("#", "");
-  const r = parseInt(value.slice(0, 2), 16);
-  const g = parseInt(value.slice(2, 4), 16);
-  const b = parseInt(value.slice(4, 6), 16);
-  const rr = clamp(Math.round(r + amount), 0, 255);
-  const gg = clamp(Math.round(g + amount), 0, 255);
-  const bb = clamp(Math.round(b + amount), 0, 255);
-  return `rgb(${rr} ${gg} ${bb})`;
-}
-
 export function createGameMapRenderer(map: GameMap) {
   function drawBiomeBase(context: CanvasRenderingContext2D) {
-    const grassGradient = context.createLinearGradient(0, 0, map.world.width, map.world.height);
-    grassGradient.addColorStop(0, colorWithShift(BIOME_BASE_COLORS.grass, -12));
-    grassGradient.addColorStop(0.6, BIOME_BASE_COLORS.grass);
-    grassGradient.addColorStop(1, colorWithShift(BIOME_BASE_COLORS.grass, 6));
-    context.fillStyle = grassGradient;
+    context.fillStyle = BIOME_BASE_COLORS.grass;
     context.fillRect(0, 0, map.world.width, map.world.height);
 
     for (const region of map.biomeRegions) {
-      const gradient = context.createLinearGradient(region.x, region.y, region.x, region.y + region.height);
-      if (region.biome === "mountain") {
-        gradient.addColorStop(0, colorWithShift(BIOME_BASE_COLORS.mountain, 12));
-        gradient.addColorStop(1, colorWithShift(BIOME_BASE_COLORS.mountain, -20));
-      } else if (region.biome === "ocean") {
-        gradient.addColorStop(0, colorWithShift(BIOME_BASE_COLORS.ocean, 10));
-        gradient.addColorStop(1, colorWithShift(BIOME_BASE_COLORS.ocean, -26));
-      } else if (region.biome === "desert") {
-        gradient.addColorStop(0, colorWithShift(BIOME_BASE_COLORS.desert, 8));
-        gradient.addColorStop(1, colorWithShift(BIOME_BASE_COLORS.desert, -12));
-      } else {
-        gradient.addColorStop(0, BIOME_BASE_COLORS.grass);
-        gradient.addColorStop(1, BIOME_BASE_COLORS.grass);
-      }
-      context.fillStyle = gradient;
+      context.fillStyle = BIOME_BASE_COLORS[region.biome];
       context.fillRect(region.x, region.y, region.width, region.height);
-
-      const blend = context.createLinearGradient(0, region.y + region.height - region.feather, 0, region.y + region.height);
-      blend.addColorStop(0, "rgba(0, 0, 0, 0)");
-      blend.addColorStop(1, "rgba(30, 45, 30, 0.18)");
-      context.fillStyle = blend;
-      context.fillRect(region.x, region.y + region.height - region.feather, region.width, region.feather);
     }
   }
 
-  function drawLandmarks(context: CanvasRenderingContext2D) {
-    for (const landmark of map.landmarks) {
-      if (landmark.points.length < 2) {
-        continue;
-      }
-      context.beginPath();
-      context.moveTo(landmark.points[0].x, landmark.points[0].y);
-      for (let index = 1; index < landmark.points.length; index += 1) {
-        const prev = landmark.points[index - 1];
-        const curr = landmark.points[index];
-        const midX = (prev.x + curr.x) * 0.5;
-        const midY = (prev.y + curr.y) * 0.5;
-        context.quadraticCurveTo(prev.x, prev.y, midX, midY);
-      }
-      const last = landmark.points[landmark.points.length - 1];
-      context.lineTo(last.x, last.y);
-
-      if (landmark.type === "mountainRidge") {
-        context.strokeStyle = "rgba(70, 85, 108, 0.72)";
-        context.lineWidth = 160;
-        context.lineCap = "round";
-        context.stroke();
-        context.strokeStyle = "rgba(238, 245, 252, 0.38)";
-        context.lineWidth = 42;
-        context.stroke();
-      } else if (landmark.type === "duneBand") {
-        context.strokeStyle = "rgba(176, 133, 74, 0.48)";
-        context.lineWidth = 86;
-        context.lineCap = "round";
-        context.stroke();
-        context.strokeStyle = "rgba(241, 215, 165, 0.24)";
-        context.lineWidth = 26;
-        context.stroke();
-      } else {
-        context.strokeStyle = "rgba(209, 237, 255, 0.52)";
-        context.lineWidth = 52;
-        context.lineCap = "round";
-        context.stroke();
-        context.strokeStyle = "rgba(255, 255, 255, 0.28)";
-        context.lineWidth = 14;
-        context.stroke();
-      }
+  function drawGrid(context: CanvasRenderingContext2D) {
+    const cellSize = 96;
+    context.save();
+    context.strokeStyle = "rgba(0, 0, 0, 0.18)";
+    context.lineWidth = 1;
+    context.beginPath();
+    for (let x = 0; x <= map.world.width; x += cellSize) {
+      context.moveTo(x, 0);
+      context.lineTo(x, map.world.height);
     }
+    for (let y = 0; y <= map.world.height; y += cellSize) {
+      context.moveTo(0, y);
+      context.lineTo(map.world.width, y);
+    }
+    context.stroke();
+    context.restore();
   }
 
   function getTileViewport(camera: Camera, canvas: CanvasLike, zoom: number): Viewport {
@@ -229,7 +167,7 @@ export function createGameMapRenderer(map: GameMap) {
     context.rect(drawX, drawY, drawW, drawH);
     context.clip();
     drawBiomeBase(context);
-    drawLandmarks(context);
+    drawGrid(context);
     context.restore();
   }
 
@@ -292,32 +230,6 @@ export function createGameMapRenderer(map: GameMap) {
     for (const region of map.biomeRegions) {
       context.fillStyle = map.minimapColors[region.biome] ?? BIOME_BASE_COLORS[region.biome];
       context.fillRect(x + region.x * scaleX, y + region.y * scaleY, region.width * scaleX, region.height * scaleY);
-    }
-    for (const landmark of map.landmarks) {
-      if (landmark.points.length < 2) {
-        continue;
-      }
-      context.beginPath();
-      context.moveTo(x + landmark.points[0].x * scaleX, y + landmark.points[0].y * scaleY);
-      for (let index = 1; index < landmark.points.length; index += 1) {
-        const prev = landmark.points[index - 1];
-        const curr = landmark.points[index];
-        const midX = (prev.x + curr.x) * 0.5;
-        const midY = (prev.y + curr.y) * 0.5;
-        context.quadraticCurveTo(x + prev.x * scaleX, y + prev.y * scaleY, x + midX * scaleX, y + midY * scaleY);
-      }
-      if (landmark.type === "mountainRidge") {
-        context.strokeStyle = "rgba(103, 118, 139, 0.9)";
-        context.lineWidth = 2;
-      } else if (landmark.type === "duneBand") {
-        context.strokeStyle = "rgba(177, 129, 63, 0.9)";
-        context.lineWidth = 2;
-      } else {
-        context.strokeStyle = "rgba(225, 244, 255, 0.95)";
-        context.lineWidth = 1.5;
-      }
-      context.lineCap = "round";
-      context.stroke();
     }
     for (const zone of map.blockedZones) {
       context.fillStyle = "rgba(28, 36, 30, 0.35)";
