@@ -366,6 +366,8 @@ const MINIMAP_MARGIN = 20;
 const ATTACK_RANGE = 112;
 const ATTACK_CONE_DOT = 0.25;
 const ATTACK_COOLDOWN_MS = 220;
+const PUNCH_DURATION_MS = 170;
+const PUNCH_REACH = 44;
 const PEE_PARTICLES_PER_SECOND = 48;
 
 const keys = new Set<string>();
@@ -391,6 +393,9 @@ let hasJoinedLobby = false;
 let spawnPointIndex = 0;
 let chatDrawerOpen = false;
 let lastAttackAt = 0;
+let lastPunchAt = -PUNCH_DURATION_MS;
+let activePunchSide: -1 | 1 = 1;
+let nextPunchSide: -1 | 1 = 1;
 const resourceNodes: ResourceNode[] = [];
 const inventory: ResourceInventory = {
   wood: 0,
@@ -690,6 +695,16 @@ function tryAttackResource() {
   updateResourcePanel();
 }
 
+function triggerPunch() {
+  if (!localPlayer || !hasJoinedLobby) {
+    return;
+  }
+
+  activePunchSide = nextPunchSide;
+  nextPunchSide = nextPunchSide === 1 ? -1 : 1;
+  lastPunchAt = performance.now();
+  tryAttackResource();
+}
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -1292,7 +1307,6 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const bodyRadius = world.playerRadius;
   const handRadius = Math.max(5, Math.round(bodyRadius * 0.28));
   const footRadius = Math.max(5, Math.round(bodyRadius * 0.32));
-  const handGap = Math.max(4, Math.round(bodyRadius * 0.1));
   const facingLength = Math.max(1, Math.hypot(player.facingX, player.facingY));
   const facingX = player.facingX / facingLength;
   const facingY = player.facingY / facingLength;
@@ -1307,11 +1321,22 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const footForwardOffsetB = -footSwing * bodyRadius * 0.24;
   const footBaseX = player.x + facingX * footForward;
   const footBaseY = player.y + facingY * footForward;
-  const handOffset = bodyRadius + handRadius + handGap;
-  const handLeftX = player.x + sideX * handOffset;
-  const handLeftY = player.y + sideY * handOffset;
-  const handRightX = player.x - sideX * handOffset;
-  const handRightY = player.y - sideY * handOffset;
+  const handSide = bodyRadius * 0.84;
+  const handForward = bodyRadius * 0.14;
+  const handBaseLeftX = player.x + sideX * handSide + facingX * handForward;
+  const handBaseLeftY = player.y + sideY * handSide + facingY * handForward;
+  const handBaseRightX = player.x - sideX * handSide + facingX * handForward;
+  const handBaseRightY = player.y - sideY * handSide + facingY * handForward;
+  const punchAge = performance.now() - lastPunchAt;
+  const punchActive = isLocal && punchAge >= 0 && punchAge < PUNCH_DURATION_MS;
+  const punchPhase = punchActive ? punchAge / PUNCH_DURATION_MS : 1;
+  const punchPulse = punchActive ? (punchPhase < 0.5 ? punchPhase * 2 : (1 - punchPhase) * 2) : 0;
+  const leftPunch = punchActive && activePunchSide === 1 ? punchPulse * PUNCH_REACH : 0;
+  const rightPunch = punchActive && activePunchSide === -1 ? punchPulse * PUNCH_REACH : 0;
+  const handLeftX = handBaseLeftX + facingX * leftPunch;
+  const handLeftY = handBaseLeftY + facingY * leftPunch;
+  const handRightX = handBaseRightX + facingX * rightPunch;
+  const handRightY = handBaseRightY + facingY * rightPunch;
   const outlineColor = "#323254";
   const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
   const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
@@ -1351,7 +1376,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.fill();
   context.stroke();
 
-  // Draw side hands with a small gap from the body.
+  // Draw side hands before the body so they tuck underneath.
   context.beginPath();
   context.arc(handLeftX, handLeftY, handRadius, 0, Math.PI * 2);
   context.fill();
@@ -1701,6 +1726,14 @@ chatDrawerToggle.addEventListener("click", () => {
   setChatDrawerOpen(!chatDrawerOpen);
 });
 
+canvas.addEventListener("pointerdown", (event) => {
+  if (!hasJoinedLobby) {
+    return;
+  }
+
+  triggerPunch();
+  event.preventDefault();
+});
 signInTab.addEventListener("click", () => {
   setAuthMode("signin");
 });
