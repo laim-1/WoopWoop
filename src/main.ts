@@ -3,6 +3,15 @@ import type { Unsubscribe } from "firebase/database";
 import { database, signInPlayer } from "./firebase";
 import "./styles.css";
 
+type Area = "forest" | "home";
+type CharacterId = "boybrown" | "girlblonde" | "girlbrown";
+
+type CharacterOption = {
+  id: CharacterId;
+  label: string;
+  src: string;
+};
+
 type Player = {
   id: string;
   x: number;
@@ -12,18 +21,13 @@ type Player = {
   moving: boolean;
   step: number;
   area: Area;
-  skinTone: SkinTone;
-  hairStyle: HairStyle;
+  characterId: CharacterId;
   name: string;
   lastSeen?: number | object;
 };
 
 type PlayerRecord = Omit<Player, "id">;
 type PlayerSnapshot = Partial<PlayerRecord>;
-
-type Area = "forest" | "home" | "shop";
-type SkinTone = "#f5f1e8" | "#d8ad7c" | "#9a6848" | "#5f3a28";
-type HairStyle = "none" | "tuft" | "bob" | "cap" | "girl";
 
 type KickedRecord = {
   kickedAt?: number | object;
@@ -51,7 +55,13 @@ if (!app) {
   throw new Error("Missing #app element");
 }
 
-const titleLogoSrc = `${import.meta.env.BASE_URL}assets/branding/title-logo.png`;
+const assetBase = import.meta.env.BASE_URL;
+const titleLogoSrc = `${assetBase}assets/branding/title-logo.png`;
+const characters: CharacterOption[] = [
+  { id: "boybrown", label: "Boy Brown", src: `${assetBase}assets/characters/boybrown.png` },
+  { id: "girlblonde", label: "Girl Blonde", src: `${assetBase}assets/characters/girlblonde.png` },
+  { id: "girlbrown", label: "Girl Brown", src: `${assetBase}assets/characters/girlbrown.png` }
+];
 
 app.innerHTML = `
   <main class="shell">
@@ -63,7 +73,8 @@ app.innerHTML = `
         onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
       />
       <h1 class="title-fallback" hidden>WoopWoop</h1>
-      <p>Enter a name, join the lobby, then move with <strong>WASD</strong>.</p>
+      <p>Pick a character, enter a name, then move with <strong>WASD</strong>.</p>
+      <section class="character-picker" id="character-picker" aria-label="Choose your character"></section>
       <form class="join-form" id="join-form">
         <label for="player-name">Player name</label>
         <input
@@ -96,7 +107,7 @@ app.innerHTML = `
       <section class="devtools-panel is-hidden" id="devtools-panel">
         <h2>Devtools</h2>
         <p class="devtools-help" id="devtools-message">Kick stale accounts from the lobby.</p>
-        <ul class="devtools-list" id="devtools-players-list"></ul>
+        <ul id="devtools-players-list" class="devtools-list"></ul>
       </section>
     </section>
 
@@ -129,6 +140,7 @@ const joinMenuElement = document.querySelector<HTMLElement>("#join-menu");
 const joinFormElement = document.querySelector<HTMLFormElement>("#join-form");
 const nameInputElement = document.querySelector<HTMLInputElement>("#player-name");
 const menuErrorElement = document.querySelector<HTMLParagraphElement>("#menu-error");
+const characterPickerElement = document.querySelector<HTMLElement>("#character-picker");
 const devtoolsFormElement = document.querySelector<HTMLFormElement>("#devtools-form");
 const devtoolsPasswordElement = document.querySelector<HTMLInputElement>("#devtools-password");
 const devtoolsPanelElement = document.querySelector<HTMLElement>("#devtools-panel");
@@ -150,6 +162,7 @@ if (
   !joinFormElement ||
   !nameInputElement ||
   !menuErrorElement ||
+  !characterPickerElement ||
   !devtoolsFormElement ||
   !devtoolsPasswordElement ||
   !devtoolsPanelElement ||
@@ -179,6 +192,7 @@ const joinMenu = joinMenuElement;
 const joinForm = joinFormElement;
 const nameInput = nameInputElement;
 const menuError = menuErrorElement;
+const characterPicker = characterPickerElement;
 const devtoolsForm = devtoolsFormElement;
 const devtoolsPassword = devtoolsPasswordElement;
 const devtoolsPanel = devtoolsPanelElement;
@@ -197,7 +211,7 @@ const context = renderingContext;
 const world = {
   width: canvas.width,
   height: canvas.height,
-  playerRadius: 16,
+  playerRadius: 24,
   speed: 260
 };
 
@@ -205,33 +219,22 @@ const DEVTOOLS_PASSWORD = "0310";
 const DEFAULT_FACING = { x: 0, y: 1 };
 const FOREST_AREA: Area = "forest";
 const HOME_AREA: Area = "home";
-const SHOP_AREA: Area = "shop";
 const TRANSITION_PADDING = 24;
 const REMOTE_INTERPOLATION_SPEED = 12;
 const SYNC_INTERVAL_MS = 90;
-const TILE_SIZE = 40;
-const SHOP_DOOR_START_TILE = 6;
-const SHOP_DOOR_END_TILE = 7;
-const SHOP_DOOR_X = SHOP_DOOR_START_TILE * TILE_SIZE;
-const SHOP_DOOR_WIDTH = (SHOP_DOOR_END_TILE - SHOP_DOOR_START_TILE + 1) * TILE_SIZE;
-const SKIN_TONES: SkinTone[] = ["#f5f1e8", "#d8ad7c", "#9a6848", "#5f3a28"];
-const HAIR_STYLES: HairStyle[] = ["none", "tuft", "bob", "cap", "girl"];
-const DEFAULT_SKIN_TONE: SkinTone = SKIN_TONES[0];
-const DEFAULT_HAIR_STYLE: HairStyle = "none";
 const CHAT_LIMIT = 20;
 const CHAT_MAX_LENGTH = 120;
-const HAIR_PICKUPS: Array<{ style: HairStyle; x: number; y: number; label: string }> = [
-  { style: "tuft", x: 260, y: 230, label: "Tuft" },
-  { style: "bob", x: 380, y: 230, label: "Bob" },
-  { style: "cap", x: 500, y: 230, label: "Cap" },
-  { style: "girl", x: 620, y: 230, label: "Girl" }
-];
+const SPRITE_SIZE = 58;
+const DEFAULT_CHARACTER_ID: CharacterId = characters[0].id;
+
 const keys = new Set<string>();
 const players = new Map<string, Player>();
 const renderedPlayers = new Map<string, Player>();
 const renderStates = new Map<string, RenderState>();
 const kickedPlayerIds = new Set<string>();
 const chatMessagesById = new Map<string, ChatMessage & { id: string }>();
+const characterImages = new Map<CharacterId, HTMLImageElement>();
+let selectedCharacterId: CharacterId = DEFAULT_CHARACTER_ID;
 let localPlayer: Player | null = null;
 let lastFrameAt = performance.now();
 let lastSyncAt = 0;
@@ -241,6 +244,35 @@ let chatUnsubscribe: Unsubscribe | null = null;
 let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
+
+for (const character of characters) {
+  const image = new Image();
+  image.src = character.src;
+  characterImages.set(character.id, image);
+}
+
+function renderCharacterPicker() {
+  characterPicker.innerHTML = "";
+
+  for (const character of characters) {
+    const button = document.createElement("button");
+    const image = document.createElement("img");
+    const label = document.createElement("span");
+
+    button.type = "button";
+    button.className = "character-option";
+    button.classList.toggle("is-selected", selectedCharacterId === character.id);
+    image.src = character.src;
+    image.alt = character.label;
+    label.textContent = character.label;
+    button.append(image, label);
+    button.addEventListener("click", () => {
+      selectedCharacterId = character.id;
+      renderCharacterPicker();
+    });
+    characterPicker.append(button);
+  }
+}
 
 window.addEventListener("keydown", (event) => {
   if (event.target instanceof HTMLInputElement) {
@@ -252,9 +284,6 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
   } else if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(event.code)) {
     keys.add(event.code);
-    event.preventDefault();
-  } else if (event.code === "KeyE") {
-    interact();
     event.preventDefault();
   }
 });
@@ -281,19 +310,11 @@ function normalizeFacing(player: Player) {
 }
 
 function normalizeArea(area: PlayerSnapshot["area"]): Area {
-  if (area === HOME_AREA || area === SHOP_AREA) {
-    return area;
-  }
-
-  return FOREST_AREA;
+  return area === HOME_AREA ? HOME_AREA : FOREST_AREA;
 }
 
-function normalizeSkinTone(skinTone: PlayerSnapshot["skinTone"]): SkinTone {
-  return SKIN_TONES.includes(skinTone as SkinTone) ? (skinTone as SkinTone) : DEFAULT_SKIN_TONE;
-}
-
-function normalizeHairStyle(hairStyle: PlayerSnapshot["hairStyle"]): HairStyle {
-  return HAIR_STYLES.includes(hairStyle as HairStyle) ? (hairStyle as HairStyle) : DEFAULT_HAIR_STYLE;
+function normalizeCharacterId(characterId: PlayerSnapshot["characterId"]): CharacterId {
+  return characters.some((character) => character.id === characterId) ? (characterId as CharacterId) : DEFAULT_CHARACTER_ID;
 }
 
 function currentArea(): Area {
@@ -310,8 +331,7 @@ function makePlayer(userId: string, name: string): Player {
     area: FOREST_AREA,
     moving: false,
     step: 0,
-    skinTone: DEFAULT_SKIN_TONE,
-    hairStyle: DEFAULT_HAIR_STYLE,
+    characterId: selectedCharacterId,
     name
   };
 }
@@ -415,7 +435,6 @@ function renderPlayersList() {
 
     if (devtoolsUnlocked) {
       const devtoolsItem = document.createElement("li");
-      const devtoolsSwatch = document.createElement("span");
       const details = document.createElement("span");
       const playerName = document.createElement("span");
       const playerId = document.createElement("small");
@@ -423,7 +442,6 @@ function renderPlayersList() {
 
       devtoolsItem.className = "devtools-row";
       details.className = "devtools-player-details";
-      devtoolsSwatch.className = "player-swatch";
       playerName.textContent = player.name;
       playerId.textContent = player.id;
       kickButton.type = "button";
@@ -434,7 +452,7 @@ function renderPlayersList() {
       });
 
       details.append(playerName, playerId);
-      devtoolsItem.append(devtoolsSwatch, details, kickButton);
+      devtoolsItem.append(details, kickButton);
       devtoolsPlayersList.append(devtoolsItem);
     }
   }
@@ -449,7 +467,6 @@ function renderPlayersList() {
   if (devtoolsUnlocked && kickedPlayers.length > 0) {
     for (const kickedPlayerId of kickedPlayers) {
       const kickedItem = document.createElement("li");
-      const marker = document.createElement("span");
       const details = document.createElement("span");
       const label = document.createElement("span");
       const playerId = document.createElement("small");
@@ -457,7 +474,6 @@ function renderPlayersList() {
 
       kickedItem.className = "devtools-row devtools-row--kicked";
       details.className = "devtools-player-details";
-      marker.className = "kicked-marker";
       label.textContent = "Kicked player";
       playerId.textContent = kickedPlayerId;
       clearButton.type = "button";
@@ -467,7 +483,7 @@ function renderPlayersList() {
       });
 
       details.append(label, playerId);
-      kickedItem.append(marker, details, clearButton);
+      kickedItem.append(details, clearButton);
       devtoolsPlayersList.append(kickedItem);
     }
   }
@@ -545,28 +561,6 @@ async function sendChatMessage() {
   } satisfies ChatMessage);
 }
 
-function nearestHairPickup() {
-  if (!localPlayer || localPlayer.area !== SHOP_AREA) {
-    return null;
-  }
-
-  const player = localPlayer;
-
-  return (
-    HAIR_PICKUPS.find((pickup) => Math.hypot(player.x - pickup.x, player.y - pickup.y) <= 48) ?? null
-  );
-}
-
-function interact() {
-  const pickup = nearestHairPickup();
-
-  if (!pickup) {
-    return;
-  }
-
-  void applyHairStyle(pickup.style);
-}
-
 async function syncLocalPlayer() {
   if (!localPlayer) {
     return;
@@ -576,8 +570,7 @@ async function syncLocalPlayer() {
     x: Math.round(localPlayer.x),
     y: Math.round(localPlayer.y),
     area: localPlayer.area,
-    skinTone: localPlayer.skinTone,
-    hairStyle: localPlayer.hairStyle,
+    characterId: localPlayer.characterId,
     facingX: localPlayer.facingX,
     facingY: localPlayer.facingY,
     moving: localPlayer.moving,
@@ -620,16 +613,7 @@ function updateLocalPlayer(deltaSeconds: number) {
   localPlayer.x = clamp(localPlayer.x, world.playerRadius, world.width - world.playerRadius);
   localPlayer.y = clamp(localPlayer.y, world.playerRadius, world.height - world.playerRadius);
 
-  const isOnShopDoor = localPlayer.x >= SHOP_DOOR_X && localPlayer.x <= SHOP_DOOR_X + SHOP_DOOR_WIDTH;
-
-  if (localPlayer.area === FOREST_AREA && localPlayer.y <= world.playerRadius && isOnShopDoor) {
-    localPlayer.area = SHOP_AREA;
-    localPlayer.x = SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2;
-    localPlayer.y = world.height - world.playerRadius - TRANSITION_PADDING;
-    localPlayer.facingX = 0;
-    localPlayer.facingY = -1;
-    setStatus("Entered shop. Walk up to hair and press E.", "online");
-  } else if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
+  if (localPlayer.area === FOREST_AREA && localPlayer.x <= world.playerRadius) {
     localPlayer.area = HOME_AREA;
     localPlayer.x = world.width - world.playerRadius - TRANSITION_PADDING;
     localPlayer.y = world.height / 2;
@@ -643,13 +627,6 @@ function updateLocalPlayer(deltaSeconds: number) {
     localPlayer.facingX = 1;
     localPlayer.facingY = 0;
     setStatus("Entered main plaza", "online");
-  } else if (localPlayer.area === SHOP_AREA && localPlayer.y >= world.height - world.playerRadius) {
-    localPlayer.area = FOREST_AREA;
-    localPlayer.x = SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2;
-    localPlayer.y = world.playerRadius + TRANSITION_PADDING;
-    localPlayer.facingX = 0;
-    localPlayer.facingY = 1;
-    setStatus("Returned to main plaza", "online");
   }
 }
 
@@ -720,20 +697,10 @@ function drawForest() {
 
   context.fillStyle = "rgba(18, 31, 16, 0.72)";
   context.fillRect(0, 0, 18, world.height);
-  context.fillStyle = "#4a3b54";
-  context.fillRect(SHOP_DOOR_X, 0, SHOP_DOOR_WIDTH, 34);
-  context.fillStyle = "#b998d6";
-  context.fillRect(SHOP_DOOR_X + 6, 8, SHOP_DOOR_WIDTH - 12, 20);
-  context.strokeStyle = "#f2ead8";
-  context.lineWidth = 2;
-  context.strokeRect(SHOP_DOOR_X, 0, TILE_SIZE, TILE_SIZE);
-  context.strokeRect(SHOP_DOOR_X + TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
   context.fillStyle = "#d8c9aa";
   context.font = "16px system-ui, sans-serif";
   context.textAlign = "left";
   context.fillText("Home entrance", 28, world.height / 2 - 12);
-  context.textAlign = "center";
-  context.fillText("Shop", SHOP_DOOR_X + SHOP_DOOR_WIDTH / 2, 54);
 }
 
 function drawHome() {
@@ -763,147 +730,35 @@ function drawHome() {
   context.fillText("Forest exit", world.width - 36, world.height / 2 - 12);
 }
 
-function drawShop() {
-  context.fillStyle = "#4a3b54";
-  context.fillRect(0, 0, world.width, world.height);
-
-  context.strokeStyle = "rgba(231, 207, 255, 0.18)";
-  context.lineWidth = 2;
-  for (let x = 0; x <= world.width; x += TILE_SIZE) {
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, world.height);
-    context.stroke();
-  }
-
-  for (let y = 0; y <= world.height; y += TILE_SIZE) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.lineTo(world.width, y);
-    context.stroke();
-  }
-
-  context.fillStyle = "#2f2637";
-  context.fillRect(0, world.height - 28, world.width, 28);
-  context.fillStyle = "#d8c9aa";
-  context.font = "16px system-ui, sans-serif";
-  context.textAlign = "center";
-  context.fillText("Walk down to return home", world.width / 2, world.height - 42);
-  context.fillText("Character Shop", world.width / 2, 54);
-
-  for (const pickup of HAIR_PICKUPS) {
-    context.fillStyle = "#2f2637";
-    context.fillRect(pickup.x - 34, pickup.y - 20, 68, 52);
-    context.strokeStyle = "#d8c9aa";
-    context.lineWidth = 2;
-    context.strokeRect(pickup.x - 34, pickup.y - 20, 68, 52);
-    context.fillStyle = "#f2ead8";
-    context.font = "13px system-ui, sans-serif";
-    context.fillText(pickup.label, pickup.x, pickup.y + 48);
-
-    drawHairPreview(pickup.style, pickup.x, pickup.y + 6);
-  }
-}
-
-function drawHairPreview(hairStyle: HairStyle, x: number, y: number) {
-  context.fillStyle = "#f5f1e8";
-  context.beginPath();
-  context.arc(x, y, 13, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = "#2b1b12";
-
-  if (hairStyle === "tuft") {
-    context.beginPath();
-    context.arc(x - 4, y - 10, 5, Math.PI, Math.PI * 2);
-    context.arc(x + 4, y - 10, 5, Math.PI, Math.PI * 2);
-    context.fill();
-  } else if (hairStyle === "bob") {
-    context.beginPath();
-    context.arc(x, y - 5, 12, Math.PI, Math.PI * 2);
-    context.fill();
-  } else if (hairStyle === "cap") {
-    context.fillStyle = "#5b7f43";
-    context.beginPath();
-    context.arc(x, y - 6, 12, Math.PI, Math.PI * 2);
-    context.fill();
-  } else if (hairStyle === "girl") {
-    context.beginPath();
-    context.arc(x, y - 6, 13, Math.PI, Math.PI * 2);
-    context.arc(x - 9, y + 4, 5, 0, Math.PI * 2);
-    context.arc(x + 9, y + 4, 5, 0, Math.PI * 2);
-    context.fill();
-  }
-}
-
-function drawHair(player: Player) {
-  context.fillStyle = "#2b1b12";
-
-  if (player.hairStyle === "tuft") {
-    context.beginPath();
-    context.arc(player.x - 4, player.y - 13, 6, Math.PI, Math.PI * 2);
-    context.arc(player.x + 4, player.y - 13, 6, Math.PI, Math.PI * 2);
-    context.fill();
-  } else if (player.hairStyle === "bob") {
-    context.beginPath();
-    context.arc(player.x, player.y - 7, 14, Math.PI, Math.PI * 2);
-    context.fill();
-  } else if (player.hairStyle === "cap") {
-    context.fillStyle = "#5b7f43";
-    context.beginPath();
-    context.arc(player.x, player.y - 8, 13, Math.PI, Math.PI * 2);
-    context.fill();
-  }
-}
-
 function drawPlayer(player: Player, isLocal: boolean) {
-  const facing = normalizeFacing(player);
-  const eyeOffsetX = facing.x * 5;
-  const eyeOffsetY = facing.y * 5;
-  const perpendicularX = -facing.y * 4;
-  const perpendicularY = facing.x * 4;
-  const handSwing = player.moving ? Math.sin(player.step) * 4 : 0;
-  const leftHandX = player.x + perpendicularX * 4 + facing.x * handSwing;
-  const leftHandY = player.y + perpendicularY * 4 + facing.y * handSwing;
-  const rightHandX = player.x - perpendicularX * 4 - facing.x * handSwing;
-  const rightHandY = player.y - perpendicularY * 4 - facing.y * handSwing;
+  const image = characterImages.get(player.characterId) ?? characterImages.get(DEFAULT_CHARACTER_ID);
 
-  context.fillStyle = player.skinTone;
-  context.strokeStyle = "#7b6f58";
-  context.lineWidth = 2;
-  context.beginPath();
-  context.arc(leftHandX, leftHandY, 5.5, 0, Math.PI * 2);
-  context.arc(rightHandX, rightHandY, 5.5, 0, Math.PI * 2);
-  context.fill();
-  context.stroke();
+  if (image?.complete && image.naturalWidth > 0) {
+    context.drawImage(image, player.x - SPRITE_SIZE / 2, player.y - SPRITE_SIZE / 2, SPRITE_SIZE, SPRITE_SIZE);
+  } else {
+    context.fillStyle = "#f5f1e8";
+    context.beginPath();
+    context.arc(player.x, player.y, world.playerRadius, 0, Math.PI * 2);
+    context.fill();
+  }
 
-  context.beginPath();
-  context.fillStyle = player.skinTone;
-  context.arc(player.x, player.y, world.playerRadius, 0, Math.PI * 2);
-  context.fill();
-  context.strokeStyle = isLocal ? "#2f4a2d" : "#7b6f58";
-  context.lineWidth = isLocal ? 4 : 2;
-  context.stroke();
-  drawHair(player);
-
-  context.fillStyle = "#11130f";
-  context.beginPath();
-  context.arc(player.x + eyeOffsetX + perpendicularX, player.y + eyeOffsetY + perpendicularY, 2.4, 0, Math.PI * 2);
-  context.arc(player.x + eyeOffsetX - perpendicularX, player.y + eyeOffsetY - perpendicularY, 2.4, 0, Math.PI * 2);
-  context.fill();
+  if (isLocal) {
+    context.strokeStyle = "#f2ead8";
+    context.lineWidth = 3;
+    context.strokeRect(player.x - SPRITE_SIZE / 2, player.y - SPRITE_SIZE / 2, SPRITE_SIZE, SPRITE_SIZE);
+  }
 
   context.fillStyle = "#f2ead8";
   context.font = "14px system-ui, sans-serif";
   context.textAlign = "center";
-  context.fillText(isLocal ? "You" : player.name, player.x, player.y - 26);
+  context.fillText(isLocal ? "You" : player.name, player.x, player.y - SPRITE_SIZE / 2 - 8);
 }
 
 function draw() {
   context.clearRect(0, 0, world.width, world.height);
   updateOverlayPanels();
 
-  if (localPlayer?.area === SHOP_AREA) {
-    drawShop();
-  } else if (localPlayer?.area === HOME_AREA) {
+  if (localPlayer?.area === HOME_AREA) {
     drawHome();
   } else {
     drawForest();
@@ -952,8 +807,7 @@ function subscribeToLobby() {
             facingY: player.facingY ?? DEFAULT_FACING.y,
             moving: player.moving ?? false,
             step: player.step ?? 0,
-            skinTone: normalizeSkinTone(player.skinTone),
-            hairStyle: normalizeHairStyle(player.hairStyle),
+            characterId: normalizeCharacterId(player.characterId),
             name: player.name ?? `Player ${id.slice(0, 5)}`
           });
         }
@@ -1028,16 +882,6 @@ async function clearKick(playerId: string, playerName: string) {
   devtoolsMessage.textContent = `Clearing kick for ${playerName}...`;
   await remove(kickedPlayerRef(playerId));
   devtoolsMessage.textContent = `${playerName} can rejoin.`;
-}
-
-async function applyHairStyle(hairStyle: HairStyle) {
-  if (!localPlayer) {
-    return;
-  }
-
-  localPlayer.hairStyle = hairStyle;
-  setStatus(`Equipped ${hairStyle} hair`, "online");
-  await syncLocalPlayer();
 }
 
 async function joinLobby(playerName: string) {
@@ -1124,3 +968,5 @@ joinForm.addEventListener("submit", (event) => {
     setStatus(`Could not join: ${error.message}`, "error");
   });
 });
+
+renderCharacterPicker();
