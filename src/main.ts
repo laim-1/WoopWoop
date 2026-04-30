@@ -399,8 +399,9 @@ const MINIMAP_MARGIN = 20;
 const ATTACK_RANGE = 112;
 const ATTACK_CONE_DOT = 0.25;
 const ATTACK_COOLDOWN_MS = 220;
-const PUNCH_DURATION_MS = 170;
-const PUNCH_REACH = 44;
+const PUNCH_DURATION_MS = 210;
+const PUNCH_REACH = 52;
+const PUNCH_EXTEND_PHASE = 0.34;
 const PEE_PARTICLES_PER_SECOND = 48;
 
 const keys = new Set<string>();
@@ -1202,7 +1203,7 @@ function updateLocalPlayer(deltaSeconds: number) {
   if (localPlayer.moving) {
     localPlayer.facingX = localVelocityX / movementSpeed;
     localPlayer.facingY = localVelocityY / movementSpeed;
-    localPlayer.step += deltaSeconds * (sprinting ? 13 : 9);
+    localPlayer.step += deltaSeconds * (sprinting ? 9.5 : 6.5);
   } else {
     localVelocityX = 0;
     localVelocityY = 0;
@@ -1367,7 +1368,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const footForwardOffsetB = -footSwing * bodyRadius * 0.24;
   const footBaseX = player.x + facingX * footForward;
   const footBaseY = player.y + facingY * footForward;
-  const handSide = bodyRadius * 0.84;
+  const handSide = bodyRadius * 0.96;
   const handForward = bodyRadius * 0.14;
   const handBaseLeftX = player.x + sideX * handSide + facingX * handForward;
   const handBaseLeftY = player.y + sideY * handSide + facingY * handForward;
@@ -1376,7 +1377,19 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const punchAge = performance.now() - lastPunchAt;
   const punchActive = isLocal && punchAge >= 0 && punchAge < PUNCH_DURATION_MS;
   const punchPhase = punchActive ? punchAge / PUNCH_DURATION_MS : 1;
-  const punchPulse = punchActive ? (punchPhase < 0.5 ? punchPhase * 2 : (1 - punchPhase) * 2) : 0;
+  let punchPulse = 0;
+  if (punchActive) {
+    if (punchPhase < PUNCH_EXTEND_PHASE) {
+      // Quick forward jab.
+      const t = punchPhase / PUNCH_EXTEND_PHASE;
+      punchPulse = 1 - Math.pow(1 - t, 3);
+    } else {
+      // Smoother recovery back to guard.
+      const t = (punchPhase - PUNCH_EXTEND_PHASE) / (1 - PUNCH_EXTEND_PHASE);
+      const eased = 1 - Math.pow(t, 2);
+      punchPulse = Math.max(0, eased);
+    }
+  }
   const leftPunch = punchActive && activePunchSide === 1 ? punchPulse * PUNCH_REACH : 0;
   const rightPunch = punchActive && activePunchSide === -1 ? punchPulse * PUNCH_REACH : 0;
   const handLeftX = handBaseLeftX + facingX * leftPunch;
