@@ -205,8 +205,9 @@ app.innerHTML = `
         <h1>Main Plaza</h1>
       </div>
       <div class="status" id="status">Connecting...</div>
-      <div class="hud-resources" id="hud-resources">Wood: 0 | Stone: 0 | Berries: 0</div>
     </section>
+
+    <aside class="hud-resources is-hidden" id="hud-resources">Wood: 0 | Stone: 0 | Berries: 0</aside>
 
     <aside class="lobby-panel is-hidden" id="lobby-panel">
       <h2>Players <span id="player-count">0</span></h2>
@@ -262,7 +263,7 @@ const devtoolsPanelElement = document.querySelector<HTMLElement>("#devtools-pane
 const devtoolsMessageElement = document.querySelector<HTMLParagraphElement>("#devtools-message");
 const devtoolsPlayersListElement = document.querySelector<HTMLUListElement>("#devtools-players-list");
 const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
-const hudResourcesElement = document.querySelector<HTMLDivElement>("#hud-resources");
+const hudResourcesElement = document.querySelector<HTMLElement>("#hud-resources");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
@@ -446,6 +447,8 @@ let lastAttackAt = 0;
 let lastPunchAt = -PUNCH_DURATION_MS;
 let activePunchSide: -1 | 1 = 1;
 let nextPunchSide: -1 | 1 = 1;
+let lastPunchAimX = DEFAULT_FACING.x;
+let lastPunchAimY = DEFAULT_FACING.y;
 const resourceNodes: ResourceNode[] = [];
 const inventory: ResourceInventory = {
   wood: 0,
@@ -787,6 +790,12 @@ function triggerPunch() {
     return;
   }
 
+  const aimDx = target.x - localPlayer.x;
+  const aimDy = target.y - localPlayer.y;
+  const aimLength = Math.max(1, Math.hypot(aimDx, aimDy));
+  lastPunchAimX = aimDx / aimLength;
+  lastPunchAimY = aimDy / aimLength;
+
   if (!performResourceAttack(target)) {
     return;
   }
@@ -889,6 +898,7 @@ function setStatus(message: string, state: "online" | "offline" | "error") {
 function showGame() {
   joinMenu.classList.add("is-hidden");
   gameHud.classList.remove("is-hidden");
+  hudResources.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
   resourcePanel.classList.remove("is-hidden");
   chatPanel.classList.remove("is-hidden");
@@ -899,6 +909,7 @@ function updateOverlayPanels() {
   chatDrawer.classList.toggle("is-hidden", !hasJoinedLobby || !isFirebaseConfigured);
   resourcePanel.classList.toggle("is-hidden", !hasJoinedLobby);
   paintControls.classList.toggle("is-hidden", !hasJoinedLobby);
+  hudResources.classList.toggle("is-hidden", !hasJoinedLobby);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -1474,10 +1485,12 @@ function drawPlayer(player: Player, isLocal: boolean) {
   }
   const leftPunch = punchActive && activePunchSide === 1 ? punchPulse * PUNCH_REACH : 0;
   const rightPunch = punchActive && activePunchSide === -1 ? punchPulse * PUNCH_REACH : 0;
-  const handLeftX = handBaseLeftX + facingX * leftPunch;
-  const handLeftY = handBaseLeftY + facingY * leftPunch;
-  const handRightX = handBaseRightX + facingX * rightPunch;
-  const handRightY = handBaseRightY + facingY * rightPunch;
+  const punchDirX = punchActive && isLocal ? lastPunchAimX : facingX;
+  const punchDirY = punchActive && isLocal ? lastPunchAimY : facingY;
+  const handLeftX = handBaseLeftX + punchDirX * leftPunch;
+  const handLeftY = handBaseLeftY + punchDirY * leftPunch;
+  const handRightX = handBaseRightX + punchDirX * rightPunch;
+  const handRightY = handBaseRightY + punchDirY * rightPunch;
   const outlineColor = "#323254";
   const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
   const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
@@ -1628,10 +1641,6 @@ function tick(frameAt: number) {
   updatePeeParticles(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
   updateCamera(deltaSeconds);
-
-  if (findAttackTarget()) {
-    triggerPunch();
-  }
 
   if (isFirebaseConfigured && hasJoinedLobby && localPlayer && frameAt - lastSyncAt > SYNC_INTERVAL_MS) {
     lastSyncAt = frameAt;

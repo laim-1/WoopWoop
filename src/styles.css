@@ -344,7 +344,7 @@ body {
 .hud-resources {
   position: fixed;
   right: 1rem;
-  top: 1rem;
+  top: 4rem;
   z-index: 30;
   padding: 0.45rem 0.7rem;
   border: 1px solid rgba(196, 171, 119, 0.24);
