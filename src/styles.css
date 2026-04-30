@@ -357,7 +357,7 @@ body {
 .resource-panel {
   position: absolute;
   right: 1rem;
-  top: 1rem;
+  top: 3.85rem;
   width: min(20rem, calc(100vw - 2rem));
   padding: 0.625rem 0.85rem;
   border: 1px solid rgba(196, 171, 119, 0.24);
@@ -365,6 +365,58 @@ body {
   background: rgba(38, 50, 31, 0.82);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(12px);
+}
+
+.paint-controls {
+  position: absolute;
+  right: 1rem;
+  top: 1rem;
+  display: grid;
+  justify-items: end;
+  gap: 0.5rem;
+  z-index: 20;
+}
+
+.paint-controls-toggle {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 999px;
+  background: rgba(38, 50, 31, 0.88);
+  color: #f2ead8;
+  font: inherit;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+
+.paint-controls-panel {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(196, 171, 119, 0.24);
+  border-radius: 0.75rem;
+  background: rgba(38, 50, 31, 0.88);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+}
+
+.paint-controls-panel label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  color: #f2ead8;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.paint-controls-panel input[type="color"] {
+  width: 2.15rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
 }
 
 .resource-panel h2 {
@@ -498,6 +550,8 @@ body {
 @media (max-width: 760px) {
   .hud,
   .lobby-panel,
+  .resource-panel,
+  .paint-controls,
   .chat-panel,
   .chat-drawer {
     position: static;

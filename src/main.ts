@@ -74,6 +74,12 @@ type PeeParticle = {
   size: number;
 };
 
+type PlayerColorPalette = {
+  body: string;
+  hands: string;
+  feet: string;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -200,6 +206,15 @@ app.innerHTML = `
       <p id="resource-counts">Wood: 0 | Stone: 0 | Berries: 0</p>
     </aside>
 
+    <section class="paint-controls is-hidden" id="paint-controls">
+      <button type="button" class="paint-controls-toggle" id="paint-controls-toggle" aria-expanded="false">🖌</button>
+      <form class="paint-controls-panel is-hidden" id="paint-controls-panel">
+        <label>Body <input id="paint-body" type="color" value="#ffffff" /></label>
+        <label>Hands <input id="paint-hands" type="color" value="#ffffff" /></label>
+        <label>Feet <input id="paint-feet" type="color" value="#ffffff" /></label>
+      </form>
+    </section>
+
     <section class="chat-drawer is-hidden" id="chat-drawer">
       <button type="button" class="chat-drawer-toggle" id="chat-drawer-toggle" aria-expanded="false">
         ▲ Chat
@@ -240,6 +255,12 @@ const playerCountElement = document.querySelector<HTMLSpanElement>("#player-coun
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
 const resourcePanelElement = document.querySelector<HTMLElement>("#resource-panel");
 const resourceCountsElement = document.querySelector<HTMLParagraphElement>("#resource-counts");
+const paintControlsElement = document.querySelector<HTMLElement>("#paint-controls");
+const paintControlsToggleElement = document.querySelector<HTMLButtonElement>("#paint-controls-toggle");
+const paintControlsPanelElement = document.querySelector<HTMLFormElement>("#paint-controls-panel");
+const paintBodyElement = document.querySelector<HTMLInputElement>("#paint-body");
+const paintHandsElement = document.querySelector<HTMLInputElement>("#paint-hands");
+const paintFeetElement = document.querySelector<HTMLInputElement>("#paint-feet");
 const chatPanelElement = document.querySelector<HTMLElement>("#chat-panel");
 const chatMessagesElement = document.querySelector<HTMLUListElement>("#chat-messages");
 const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
@@ -272,6 +293,12 @@ if (
   !playersListElement ||
   !resourcePanelElement ||
   !resourceCountsElement ||
+  !paintControlsElement ||
+  !paintControlsToggleElement ||
+  !paintControlsPanelElement ||
+  !paintBodyElement ||
+  !paintHandsElement ||
+  !paintFeetElement ||
   !chatPanelElement ||
   !chatMessagesElement ||
   !chatFormElement ||
@@ -312,6 +339,12 @@ const playerCount = playerCountElement;
 const playersList = playersListElement;
 const resourcePanel = resourcePanelElement;
 const resourceCounts = resourceCountsElement;
+const paintControls = paintControlsElement;
+const paintControlsToggle = paintControlsToggleElement;
+const paintControlsPanel = paintControlsPanelElement;
+const paintBodyInput = paintBodyElement;
+const paintHandsInput = paintHandsElement;
+const paintFeetInput = paintFeetElement;
 const chatPanel = chatPanelElement;
 const chatMessages = chatMessagesElement;
 const chatForm = chatFormElement;
@@ -404,6 +437,12 @@ const inventory: ResourceInventory = {
 };
 const peeParticles: PeeParticle[] = [];
 let peeEmissionCarry = 0;
+let paintPanelOpen = false;
+const localPlayerColors: PlayerColorPalette = {
+  body: "#ffffff",
+  hands: "#ffffff",
+  feet: "#ffffff"
+};
 
 function screenToWorldX(cameraX: number, screenX: number) {
   return cameraX + (screenX - canvas.width / 2) / CAMERA_ZOOM;
@@ -807,6 +846,7 @@ function showGame() {
 function updateOverlayPanels() {
   chatDrawer.classList.toggle("is-hidden", !hasJoinedLobby || !isFirebaseConfigured);
   resourcePanel.classList.toggle("is-hidden", !hasJoinedLobby);
+  paintControls.classList.toggle("is-hidden", !hasJoinedLobby);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -814,6 +854,12 @@ function setChatDrawerOpen(open: boolean) {
   chatPanel.classList.toggle("is-hidden", !open);
   chatDrawerToggle.textContent = `${open ? "▼" : "▲"} Chat`;
   chatDrawerToggle.setAttribute("aria-expanded", String(open));
+}
+
+function setPaintPanelOpen(open: boolean) {
+  paintPanelOpen = open;
+  paintControlsPanel.classList.toggle("is-hidden", !open);
+  paintControlsToggle.setAttribute("aria-expanded", String(open));
 }
 
 function updateResourcePanel() {
@@ -1351,7 +1397,10 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.fill();
 
   // Draw feet first so the body overlaps them.
-  context.fillStyle = isLocal ? "#ffffff" : "#f2f2f2";
+  const palette = isLocal
+    ? localPlayerColors
+    : { body: "#f2f2f2", hands: "#f2f2f2", feet: "#f2f2f2" };
+  context.fillStyle = palette.feet;
   context.beginPath();
   context.arc(
     footBaseX + sideX * footSide + facingX * footForwardOffsetA,
@@ -1377,6 +1426,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.stroke();
 
   // Draw side hands before the body so they tuck underneath.
+  context.fillStyle = palette.hands;
   context.beginPath();
   context.arc(handLeftX, handLeftY, handRadius, 0, Math.PI * 2);
   context.fill();
@@ -1388,7 +1438,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.stroke();
 
   // Body last so it sits above the hands.
-  context.fillStyle = isLocal ? "#ffffff" : "#f2f2f2";
+  context.fillStyle = palette.body;
   context.beginPath();
   context.arc(player.x, player.y, bodyRadius, 0, Math.PI * 2);
   context.fill();
@@ -1726,6 +1776,22 @@ chatDrawerToggle.addEventListener("click", () => {
   setChatDrawerOpen(!chatDrawerOpen);
 });
 
+paintControlsToggle.addEventListener("click", () => {
+  setPaintPanelOpen(!paintPanelOpen);
+});
+
+paintBodyInput.addEventListener("input", () => {
+  localPlayerColors.body = paintBodyInput.value;
+});
+
+paintHandsInput.addEventListener("input", () => {
+  localPlayerColors.hands = paintHandsInput.value;
+});
+
+paintFeetInput.addEventListener("input", () => {
+  localPlayerColors.feet = paintFeetInput.value;
+});
+
 canvas.addEventListener("pointerdown", (event) => {
   if (!hasJoinedLobby) {
     return;
@@ -1832,6 +1898,7 @@ createForm.addEventListener("submit", (event) => {
 
 setAuthMode("signin");
 setChatDrawerOpen(false);
+setPaintPanelOpen(false);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
