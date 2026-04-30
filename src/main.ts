@@ -550,6 +550,15 @@ function drawResourceNode(node: ResourceNode) {
     context.fillStyle = node.biome === "mountain" ? "#ffffff" : "#79a86a";
     context.fill();
 
+    // Center trunk marker (actual blocking zone).
+    context.beginPath();
+    context.arc(0, 0, node.radius * 0.22, 0, Math.PI * 2);
+    context.fillStyle = "#6a4a2e";
+    context.fill();
+    context.strokeStyle = "#4f3621";
+    context.lineWidth = 2.5;
+    context.stroke();
+
     context.strokeStyle = node.biome === "mountain" ? "#a9bac6" : "#355737";
     context.lineWidth = 3;
     context.stroke();
@@ -851,8 +860,6 @@ function spawnResourceNode(
   yMax: number,
   index: number,
 ) {
-  const x = xMin + rng() * Math.max(1, xMax - xMin);
-  const y = yMin + rng() * Math.max(1, yMax - yMin);
   const radiusByType: Record<ResourceNodeType, number> = {
     tree: 108,
     rock: 92,
@@ -863,12 +870,43 @@ function spawnResourceNode(
     rock: 5,
     berries: 3
   };
+  const radius = radiusByType[type];
+  const tries = 10;
+  let placedX = 0;
+  let placedY = 0;
+  let placed = false;
+
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    const x = clamp(xMin + rng() * Math.max(1, xMax - xMin), radius + 4, world.width - radius - 4);
+    const y = clamp(yMin + rng() * Math.max(1, yMax - yMin), radius + 4, world.height - radius - 4);
+    const heavyOverlap = resourceNodes.some((other) => {
+      if (other.hp <= 0) {
+        return false;
+      }
+      const dx = x - other.x;
+      const dy = y - other.y;
+      const distance = Math.hypot(dx, dy);
+      const minDistance = (radius + other.radius) * 0.72;
+      return distance < minDistance;
+    });
+    if (!heavyOverlap) {
+      placedX = x;
+      placedY = y;
+      placed = true;
+      break;
+    }
+  }
+
+  if (!placed) {
+    return;
+  }
+
   resourceNodes.push({
     id: `${type}-${biome}-${index}`,
     type,
-    x,
-    y,
-    radius: radiusByType[type],
+    x: placedX,
+    y: placedY,
+    radius,
     hp: hpByType[type],
     maxHp: hpByType[type],
     biome
@@ -1149,7 +1187,8 @@ function updateLocalPlayer(deltaSeconds: number) {
     }
     const dx = moved.x - node.x;
     const dy = moved.y - node.y;
-    const minDistance = world.playerRadius + node.radius * 0.88;
+    const blockingRadius = node.type === "tree" ? node.radius * 0.24 : node.radius * 0.88;
+    const minDistance = world.playerRadius + blockingRadius;
     const distance = Math.hypot(dx, dy);
     if (distance >= minDistance) {
       continue;
