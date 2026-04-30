@@ -49,14 +49,6 @@ type RenderState = {
   facingY: number;
 };
 
-type UsernameIndexRecord = {
-  email: string;
-  username: string;
-  uid: string;
-  createdAt?: number | object;
-  lastLoginAt?: number | object;
-};
-
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -83,21 +75,22 @@ app.innerHTML = `
         onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
       />
       <h1 class="title-fallback" hidden>WoopWoop</h1>
-      <p>Sign in with username + password to play.</p>
+      <p>Sign in with email + password to play.</p>
       <div class="auth-switch" id="auth-switch">
         <button type="button" class="is-active" id="auth-signin-tab">Sign In</button>
         <button type="button" id="auth-create-tab">Create Account</button>
       </div>
       <form class="join-form" id="signin-form">
-        <label for="signin-username">Username</label>
+        <label for="signin-username">Email</label>
         <input
           id="signin-username"
-          maxlength="18"
-          minlength="1"
+          maxlength="120"
+          minlength="5"
           name="signInUsername"
-          placeholder="Username"
+          placeholder="Email"
           required
-          autocomplete="nickname"
+          type="email"
+          autocomplete="email"
         />
         <label for="signin-password">Password</label>
         <input
@@ -506,14 +499,6 @@ function kickedPlayerRef(playerId: string) {
 
 function kickedPlayersRef() {
   return ref(database, "rooms/lobby/kicked");
-}
-
-function usernameStoreKey(normalizedUsername: string) {
-  return normalizedUsername.replace(/[.#$[\]/]/g, "_");
-}
-
-function usernameIndexRef(normalizedUsername: string) {
-  return ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}`);
 }
 
 async function loadKickedPlayers(required = false) {
@@ -1094,10 +1079,6 @@ async function clearKick(playerId: string, playerName: string) {
   devtoolsMessage.textContent = `${playerName} can rejoin.`;
 }
 
-function normalizeUsername(value: string) {
-  return value.trim().toLowerCase();
-}
-
 function setAuthPending(pending: boolean) {
   signInUsername.disabled = pending;
   signInPassword.disabled = pending;
@@ -1236,8 +1217,7 @@ createTab.addEventListener("click", () => {
 
 signInForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const username = signInUsername.value.trim();
-  const normalizedUsername = normalizeUsername(username);
+  const email = signInUsername.value.trim();
   const password = signInPassword.value;
 
   if (!isFirebaseConfigured) {
@@ -1245,8 +1225,8 @@ signInForm.addEventListener("submit", (event) => {
     return;
   }
 
-  if (!username || !password) {
-    menuError.textContent = "Enter your username and password.";
+  if (!email || !password) {
+    menuError.textContent = "Enter your email and password.";
     signInUsername.focus();
     return;
   }
@@ -1255,17 +1235,10 @@ signInForm.addEventListener("submit", (event) => {
   setAuthPending(true);
 
   void (async () => {
-    const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
-    const usernameIndexRecord = usernameIndexSnapshot.val() as UsernameIndexRecord | null;
-    if (!usernameIndexRecord?.email) {
-      throw new Error("Unknown username.");
-    }
-
-    const { displayName } = await signInFirebaseAccount(usernameIndexRecord.email, password);
-    await set(ref(database, `accounts/usernames/${usernameStoreKey(normalizedUsername)}/lastLoginAt`), serverTimestamp());
+    const { displayName } = await signInFirebaseAccount(email, password);
     selectedCharacterId = DEFAULT_CHARACTER_ID;
     signInPassword.value = "";
-    await joinLobby(displayName || usernameIndexRecord.username || username);
+    await joinLobby(displayName || email);
   })()
     .catch((error) => {
       const message = getAuthErrorMessage(error, "signin");
@@ -1280,7 +1253,6 @@ signInForm.addEventListener("submit", (event) => {
 createForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const username = createUsername.value.trim();
-  const normalizedUsername = normalizeUsername(username);
   const email = createEmail.value.trim();
   const password = createPassword.value;
 
@@ -1295,7 +1267,7 @@ createForm.addEventListener("submit", (event) => {
     return;
   }
 
-  if (normalizedUsername.length < 3) {
+  if (username.length < 3) {
     menuError.textContent = "Username must be at least 3 characters.";
     createUsername.focus();
     return;
@@ -1317,22 +1289,10 @@ createForm.addEventListener("submit", (event) => {
   setAuthPending(true);
 
   void (async () => {
-    const usernameIndexSnapshot = await get(usernameIndexRef(normalizedUsername));
-    if (usernameIndexSnapshot.exists()) {
-      throw new Error("Username already exists. Sign in instead.");
-    }
-
-    const { displayName, uid } = await createFirebaseAccount(username, email, password);
-    await set(usernameIndexRef(normalizedUsername), {
-      email,
-      username: displayName || username,
-      uid,
-      createdAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp()
-    } satisfies UsernameIndexRecord);
+    await createFirebaseAccount(username, email, password);
     createPassword.value = "";
     createEmail.value = "";
-    signInUsername.value = username;
+    signInUsername.value = email;
     signInPassword.value = "";
     setAuthMode("signin");
     menuError.textContent = "Account created. Sign in to play.";
