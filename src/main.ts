@@ -493,14 +493,67 @@ window.addEventListener("keyup", (event) => {
 
 function drawResourceNode(node: ResourceNode) {
   if (node.type === "tree") {
-    const trunkWidth = node.radius * 0.52;
-    const trunkHeight = node.radius * 0.85;
-    context.fillStyle = "#6a4a2e";
-    context.fillRect(node.x - trunkWidth / 2, node.y + node.radius * 0.1, trunkWidth, trunkHeight);
+    const points = 8;
+    const innerRatio = 0.56;
+    const rotation = -Math.PI / 2;
+    context.save();
+    context.translate(node.x, node.y);
+
+    // Shadow for depth.
     context.beginPath();
-    context.arc(node.x, node.y - node.radius * 0.15, node.radius, 0, Math.PI * 2);
-    context.fillStyle = node.biome === "mountain" ? "#e9f1f6" : "#4d7f4e";
+    for (let i = 0; i < points * 2; i += 1) {
+      const angle = rotation + (i / (points * 2)) * Math.PI * 2;
+      const radius = i % 2 === 0 ? node.radius : node.radius * innerRatio;
+      const px = Math.cos(angle) * radius;
+      const py = Math.sin(angle) * radius + 5;
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = "rgba(0, 0, 0, 0.2)";
     context.fill();
+
+    // Main pine star canopy.
+    context.beginPath();
+    for (let i = 0; i < points * 2; i += 1) {
+      const angle = rotation + (i / (points * 2)) * Math.PI * 2;
+      const radius = i % 2 === 0 ? node.radius : node.radius * innerRatio;
+      const px = Math.cos(angle) * radius;
+      const py = Math.sin(angle) * radius;
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = node.biome === "mountain" ? "#f3f8fb" : "#4f824e";
+    context.fill();
+
+    // Inner highlight.
+    context.beginPath();
+    for (let i = 0; i < points * 2; i += 1) {
+      const angle = rotation + (i / (points * 2)) * Math.PI * 2;
+      const radius = i % 2 === 0 ? node.radius * 0.58 : node.radius * 0.34;
+      const px = Math.cos(angle) * radius;
+      const py = Math.sin(angle) * radius;
+      if (i === 0) {
+        context.moveTo(px, py);
+      } else {
+        context.lineTo(px, py);
+      }
+    }
+    context.closePath();
+    context.fillStyle = node.biome === "mountain" ? "#ffffff" : "#79a86a";
+    context.fill();
+
+    context.strokeStyle = node.biome === "mountain" ? "#a9bac6" : "#355737";
+    context.lineWidth = 3;
+    context.stroke();
+    context.restore();
   } else if (node.type === "rock") {
     const sides = 6;
     const rotation = Math.PI / 6;
@@ -801,8 +854,8 @@ function spawnResourceNode(
   const x = xMin + rng() * Math.max(1, xMax - xMin);
   const y = yMin + rng() * Math.max(1, yMax - yMin);
   const radiusByType: Record<ResourceNodeType, number> = {
-    tree: 44,
-    rock: 38,
+    tree: 108,
+    rock: 92,
     berries: 30
   };
   const hpByType: Record<ResourceNodeType, number> = {
@@ -1087,7 +1140,33 @@ function updateLocalPlayer(deltaSeconds: number) {
 
   const nextX = localPlayer.x + localVelocityX * deltaSeconds;
   const nextY = localPlayer.y + localVelocityY * deltaSeconds;
-  const moved = mapRenderer.moveWithCollision(localPlayer.x, localPlayer.y, nextX, nextY, world.playerRadius);
+  let moved = mapRenderer.moveWithCollision(localPlayer.x, localPlayer.y, nextX, nextY, world.playerRadius);
+
+  // Trees and rocks are solid obstacles.
+  for (const node of resourceNodes) {
+    if (node.hp <= 0 || node.type === "berries") {
+      continue;
+    }
+    const dx = moved.x - node.x;
+    const dy = moved.y - node.y;
+    const minDistance = world.playerRadius + node.radius * 0.88;
+    const distance = Math.hypot(dx, dy);
+    if (distance >= minDistance) {
+      continue;
+    }
+
+    if (distance <= 0.001) {
+      moved = { x: localPlayer.x, y: localPlayer.y };
+      continue;
+    }
+
+    const nx = dx / distance;
+    const ny = dy / distance;
+    moved = {
+      x: node.x + nx * minDistance,
+      y: node.y + ny * minDistance
+    };
+  }
 
   localPlayer.x = moved.x;
   localPlayer.y = moved.y;
