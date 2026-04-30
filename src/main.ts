@@ -550,13 +550,13 @@ function drawResourceNode(node: ResourceNode) {
     context.fillStyle = node.biome === "mountain" ? "#ffffff" : "#79a86a";
     context.fill();
 
-    // Center trunk marker (actual blocking zone).
+    // Trunk marker near the lower center (actual blocking zone).
     context.beginPath();
-    context.arc(0, 0, node.radius * 0.22, 0, Math.PI * 2);
+    context.ellipse(0, node.radius * 0.22, node.radius * 0.2, node.radius * 0.15, 0, 0, Math.PI * 2);
     context.fillStyle = "#6a4a2e";
     context.fill();
     context.strokeStyle = "#4f3621";
-    context.lineWidth = 2.5;
+    context.lineWidth = 2;
     context.stroke();
 
     context.strokeStyle = node.biome === "mountain" ? "#a9bac6" : "#355737";
@@ -1352,15 +1352,16 @@ function draw() {
 
   mapRenderer.drawWorld(context, camera, canvas, CAMERA_ZOOM);
 
+  for (const player of renderedPlayers.values()) {
+    drawPlayer(player, player.id === localPlayer?.id);
+  }
+
+  // Draw resources over players so characters can walk "under" canopies/icons.
   for (const node of resourceNodes) {
     if (node.hp <= 0) {
       continue;
     }
     drawResourceNode(node);
-  }
-
-  for (const player of renderedPlayers.values()) {
-    drawPlayer(player, player.id === localPlayer?.id);
   }
   context.restore();
 
