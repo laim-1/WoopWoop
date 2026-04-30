@@ -7,11 +7,6 @@ import "./styles.css";
 type Area = "forest";
 type CharacterId = "boybrown" | "girlblonde" | "girlbrown";
 
-type CharacterOption = {
-  id: CharacterId;
-  label: string;
-};
-
 type Player = {
   id: string;
   x: number;
@@ -49,6 +44,26 @@ type RenderState = {
   facingY: number;
 };
 
+type ResourceNodeType = "tree" | "rock" | "berries";
+type ResourceBiome = "grass" | "mountain" | "desert" | "ocean";
+
+type ResourceNode = {
+  id: string;
+  type: ResourceNodeType;
+  x: number;
+  y: number;
+  radius: number;
+  hp: number;
+  maxHp: number;
+  biome: ResourceBiome;
+};
+
+type ResourceInventory = {
+  wood: number;
+  stone: number;
+  berries: number;
+};
+
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (!app) {
@@ -59,11 +74,6 @@ const assetBase = import.meta.env.BASE_URL;
 const gameMap = await loadGameMap(assetBase);
 const mapRenderer = createGameMapRenderer(gameMap);
 const titleLogoSrc = `${assetBase}assets/branding/title-logo.png`;
-const characters: CharacterOption[] = [
-  { id: "boybrown", label: "Boy Brown" },
-  { id: "girlblonde", label: "Girl Blonde" },
-  { id: "girlbrown", label: "Girl Brown" }
-];
 
 app.innerHTML = `
   <main class="shell">
@@ -175,19 +185,20 @@ app.innerHTML = `
       <ul id="players-list"></ul>
     </aside>
 
-    <section class="chat-panel is-hidden" id="chat-panel">
-      <ul id="chat-messages"></ul>
-      <form id="chat-form">
-        <input id="chat-input" maxlength="120" placeholder="Chat..." autocomplete="off" />
-      </form>
-    </section>
+    <aside class="resource-panel is-hidden" id="resource-panel">
+      <h2>Resources</h2>
+      <p id="resource-counts">Wood: 0 | Stone: 0 | Berries: 0</p>
+    </aside>
 
-    <section class="character-drawer is-hidden" id="character-drawer">
-      <button type="button" class="character-drawer-toggle" id="character-drawer-toggle" aria-expanded="false">
-        ▲ Character
+    <section class="chat-drawer is-hidden" id="chat-drawer">
+      <button type="button" class="chat-drawer-toggle" id="chat-drawer-toggle" aria-expanded="false">
+        ▲ Chat
       </button>
-      <div class="character-drawer-content is-hidden" id="character-drawer-content">
-        <div class="character-picker" id="character-picker"></div>
+      <div class="chat-panel is-hidden" id="chat-panel">
+        <ul id="chat-messages"></ul>
+        <form id="chat-form">
+          <input id="chat-input" maxlength="120" placeholder="Chat..." autocomplete="off" />
+        </form>
       </div>
     </section>
 
@@ -217,14 +228,14 @@ const gameHudElement = document.querySelector<HTMLElement>("#game-hud");
 const lobbyPanelElement = document.querySelector<HTMLElement>("#lobby-panel");
 const playerCountElement = document.querySelector<HTMLSpanElement>("#player-count");
 const playersListElement = document.querySelector<HTMLUListElement>("#players-list");
+const resourcePanelElement = document.querySelector<HTMLElement>("#resource-panel");
+const resourceCountsElement = document.querySelector<HTMLParagraphElement>("#resource-counts");
 const chatPanelElement = document.querySelector<HTMLElement>("#chat-panel");
 const chatMessagesElement = document.querySelector<HTMLUListElement>("#chat-messages");
 const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
 const chatInputElement = document.querySelector<HTMLInputElement>("#chat-input");
-const characterDrawerElement = document.querySelector<HTMLElement>("#character-drawer");
-const characterDrawerToggleElement = document.querySelector<HTMLButtonElement>("#character-drawer-toggle");
-const characterDrawerContentElement = document.querySelector<HTMLElement>("#character-drawer-content");
-const characterPickerElement = document.querySelector<HTMLDivElement>("#character-picker");
+const chatDrawerElement = document.querySelector<HTMLElement>("#chat-drawer");
+const chatDrawerToggleElement = document.querySelector<HTMLButtonElement>("#chat-drawer-toggle");
 
 if (
   !canvasElement ||
@@ -249,14 +260,14 @@ if (
   !lobbyPanelElement ||
   !playerCountElement ||
   !playersListElement ||
+  !resourcePanelElement ||
+  !resourceCountsElement ||
   !chatPanelElement ||
   !chatMessagesElement ||
   !chatFormElement ||
   !chatInputElement ||
-  !characterDrawerElement ||
-  !characterDrawerToggleElement ||
-  !characterDrawerContentElement ||
-  !characterPickerElement
+  !chatDrawerElement ||
+  !chatDrawerToggleElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -289,14 +300,14 @@ const gameHud = gameHudElement;
 const lobbyPanel = lobbyPanelElement;
 const playerCount = playerCountElement;
 const playersList = playersListElement;
+const resourcePanel = resourcePanelElement;
+const resourceCounts = resourceCountsElement;
 const chatPanel = chatPanelElement;
 const chatMessages = chatMessagesElement;
 const chatForm = chatFormElement;
 const chatInput = chatInputElement;
-const characterDrawer = characterDrawerElement;
-const characterDrawerToggle = characterDrawerToggleElement;
-const characterDrawerContent = characterDrawerContentElement;
-const characterPicker = characterPickerElement;
+const chatDrawer = chatDrawerElement;
+const chatDrawerToggle = chatDrawerToggleElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
@@ -362,7 +373,8 @@ const REMOTE_INTERPOLATION_SPEED = 12;
 const SYNC_INTERVAL_MS = 90;
 const CHAT_LIMIT = 20;
 const CHAT_MAX_LENGTH = 120;
-const DEFAULT_CHARACTER_ID: CharacterId = characters[0].id;
+const DEFAULT_CHARACTER_ID: CharacterId = "boybrown";
+const TILE_SIZE = 96;
 const WALK_SPEED = 220;
 const RUN_SPEED = 320;
 const MOVE_ACCELERATION = 8;
@@ -373,6 +385,9 @@ const CAMERA_FOLLOW_SPEED = 10;
 const MINIMAP_WIDTH = 220;
 const MINIMAP_HEIGHT = 150;
 const MINIMAP_MARGIN = 20;
+const ATTACK_RANGE = 112;
+const ATTACK_CONE_DOT = 0.25;
+const ATTACK_COOLDOWN_MS = 220;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -380,7 +395,7 @@ const renderedPlayers = new Map<string, Player>();
 const renderStates = new Map<string, RenderState>();
 const kickedPlayerIds = new Set<string>();
 const chatMessagesById = new Map<string, ChatMessage & { id: string }>();
-let selectedCharacterId: CharacterId = DEFAULT_CHARACTER_ID;
+const selectedCharacterId: CharacterId = DEFAULT_CHARACTER_ID;
 let localPlayer: Player | null = null;
 let localVelocityX = 0;
 let localVelocityY = 0;
@@ -395,7 +410,14 @@ let animationStarted = false;
 let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
 let spawnPointIndex = 0;
-let characterDrawerOpen = false;
+let chatDrawerOpen = false;
+let lastAttackAt = 0;
+const resourceNodes: ResourceNode[] = [];
+const inventory: ResourceInventory = {
+  wood: 0,
+  stone: 0,
+  berries: 0
+};
 
 function screenToWorldX(cameraX: number, screenX: number) {
   return cameraX + (screenX - canvas.width / 2) / CAMERA_ZOOM;
@@ -453,6 +475,9 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Enter" && hasJoinedLobby) {
     chatInput.focus();
     event.preventDefault();
+  } else if (event.code === "KeyE" || event.code === "Space") {
+    tryAttackResource();
+    event.preventDefault();
   } else if (["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight"].includes(event.code)) {
     keys.add(event.code);
 
@@ -466,6 +491,95 @@ window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
 });
 
+function drawResourceNode(node: ResourceNode) {
+  if (node.type === "tree") {
+    const trunkWidth = node.radius * 0.52;
+    const trunkHeight = node.radius * 0.85;
+    context.fillStyle = "#6a4a2e";
+    context.fillRect(node.x - trunkWidth / 2, node.y + node.radius * 0.1, trunkWidth, trunkHeight);
+    context.beginPath();
+    context.arc(node.x, node.y - node.radius * 0.15, node.radius, 0, Math.PI * 2);
+    context.fillStyle = node.biome === "mountain" ? "#e9f1f6" : "#4d7f4e";
+    context.fill();
+  } else if (node.type === "rock") {
+    context.beginPath();
+    context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    context.fillStyle = "#7c8792";
+    context.fill();
+    context.strokeStyle = "#5a646e";
+    context.lineWidth = 2;
+    context.stroke();
+  } else {
+    context.beginPath();
+    context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    context.fillStyle = "#3f7f47";
+    context.fill();
+    context.beginPath();
+    context.arc(node.x - node.radius * 0.35, node.y - node.radius * 0.1, node.radius * 0.22, 0, Math.PI * 2);
+    context.arc(node.x + node.radius * 0.24, node.y + node.radius * 0.16, node.radius * 0.22, 0, Math.PI * 2);
+    context.arc(node.x + node.radius * 0.06, node.y - node.radius * 0.28, node.radius * 0.2, 0, Math.PI * 2);
+    context.fillStyle = "#cf2f3b";
+    context.fill();
+  }
+}
+
+function tryAttackResource() {
+  if (!localPlayer || !hasJoinedLobby) {
+    return;
+  }
+
+  const now = performance.now();
+  if (now - lastAttackAt < ATTACK_COOLDOWN_MS) {
+    return;
+  }
+
+  let target: ResourceNode | null = null;
+  let targetDistance = Number.POSITIVE_INFINITY;
+  const facingLength = Math.max(1, Math.hypot(localPlayer.facingX, localPlayer.facingY));
+  const fx = localPlayer.facingX / facingLength;
+  const fy = localPlayer.facingY / facingLength;
+
+  for (const node of resourceNodes) {
+    if (node.hp <= 0) {
+      continue;
+    }
+    const dx = node.x - localPlayer.x;
+    const dy = node.y - localPlayer.y;
+    const distance = Math.hypot(dx, dy);
+    const maxDistance = ATTACK_RANGE + node.radius;
+    if (distance > maxDistance) {
+      continue;
+    }
+    const dot = (dx * fx + dy * fy) / Math.max(distance, 1);
+    if (dot < ATTACK_CONE_DOT) {
+      continue;
+    }
+    if (distance < targetDistance) {
+      target = node;
+      targetDistance = distance;
+    }
+  }
+
+  if (!target) {
+    return;
+  }
+
+  lastAttackAt = now;
+  target.hp -= 1;
+  if (target.hp > 0) {
+    return;
+  }
+
+  if (target.type === "tree") {
+    inventory.wood += 1;
+  } else if (target.type === "rock") {
+    inventory.stone += 1;
+  } else {
+    inventory.berries += 1;
+  }
+  updateResourcePanel();
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -475,7 +589,9 @@ function normalizeArea(_area: PlayerSnapshot["area"]): Area {
 }
 
 function normalizeCharacterId(characterId: PlayerSnapshot["characterId"]): CharacterId {
-  return characters.some((character) => character.id === characterId) ? (characterId as CharacterId) : DEFAULT_CHARACTER_ID;
+  return characterId === "boybrown" || characterId === "girlblonde" || characterId === "girlbrown"
+    ? (characterId as CharacterId)
+    : DEFAULT_CHARACTER_ID;
 }
 
 function currentArea(): Area {
@@ -564,30 +680,101 @@ function showGame() {
 }
 
 function updateOverlayPanels() {
-  chatPanel.classList.toggle("is-hidden", !hasJoinedLobby || !isFirebaseConfigured);
-  characterDrawer.classList.toggle("is-hidden", !hasJoinedLobby);
+  chatDrawer.classList.toggle("is-hidden", !hasJoinedLobby || !isFirebaseConfigured);
+  resourcePanel.classList.toggle("is-hidden", !hasJoinedLobby);
 }
 
-function renderCharacterPicker() {
-  characterPicker.innerHTML = "";
-  for (const character of characters) {
-    const option = document.createElement("button");
-    option.type = "button";
-    option.className = "character-option";
-    if (character.id === selectedCharacterId) {
-      option.classList.add("is-selected");
+function setChatDrawerOpen(open: boolean) {
+  chatDrawerOpen = open;
+  chatPanel.classList.toggle("is-hidden", !open);
+  chatDrawerToggle.textContent = `${open ? "▼" : "▲"} Chat`;
+  chatDrawerToggle.setAttribute("aria-expanded", String(open));
+}
+
+function updateResourcePanel() {
+  resourceCounts.textContent = `Wood: ${inventory.wood} | Stone: ${inventory.stone} | Berries: ${inventory.berries}`;
+}
+
+function getBiomeAtPosition(x: number, y: number): ResourceBiome {
+  for (const region of gameMap.biomeRegions) {
+    if (x >= region.x && x <= region.x + region.width && y >= region.y && y <= region.y + region.height) {
+      return region.biome;
     }
-    option.dataset.characterId = character.id;
-    option.textContent = character.label;
-    characterPicker.append(option);
   }
+  return "grass";
 }
 
-function setCharacterDrawerOpen(open: boolean) {
-  characterDrawerOpen = open;
-  characterDrawerContent.classList.toggle("is-hidden", !open);
-  characterDrawerToggle.textContent = `${open ? "▼" : "▲"} Character`;
-  characterDrawerToggle.setAttribute("aria-expanded", String(open));
+function createSeededRng(seed: number) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function spawnResourceNode(
+  rng: () => number,
+  type: ResourceNodeType,
+  biome: ResourceBiome,
+  xMin: number,
+  xMax: number,
+  yMin: number,
+  yMax: number,
+  index: number,
+) {
+  const x = xMin + rng() * Math.max(1, xMax - xMin);
+  const y = yMin + rng() * Math.max(1, yMax - yMin);
+  const radiusByType: Record<ResourceNodeType, number> = {
+    tree: 28,
+    rock: 24,
+    berries: 18
+  };
+  const hpByType: Record<ResourceNodeType, number> = {
+    tree: 4,
+    rock: 5,
+    berries: 3
+  };
+  resourceNodes.push({
+    id: `${type}-${biome}-${index}`,
+    type,
+    x,
+    y,
+    radius: radiusByType[type],
+    hp: hpByType[type],
+    maxHp: hpByType[type],
+    biome
+  });
+}
+
+function generateResourceNodes() {
+  resourceNodes.length = 0;
+  const rng = createSeededRng(13791);
+  const perTile = TILE_SIZE;
+  const totalSlots = Math.floor((world.width * world.height) / (perTile * perTile));
+  let treeIndex = 0;
+  let rockIndex = 0;
+  let berryIndex = 0;
+
+  for (let slot = 0; slot < totalSlots; slot += 1) {
+    const x = rng() * world.width;
+    const y = rng() * world.height;
+    const biome = getBiomeAtPosition(x, y);
+    if (biome === "ocean") {
+      continue;
+    }
+
+    const roll = rng();
+    if (biome !== "desert" && roll < 0.035) {
+      spawnResourceNode(rng, "tree", biome, x - 40, x + 40, y - 40, y + 40, treeIndex);
+      treeIndex += 1;
+    } else if (roll < 0.06) {
+      spawnResourceNode(rng, "rock", biome, x - 32, x + 32, y - 32, y + 32, rockIndex);
+      rockIndex += 1;
+    } else if (roll < 0.08) {
+      spawnResourceNode(rng, "berries", biome, x - 24, x + 24, y - 24, y + 24, berryIndex);
+      berryIndex += 1;
+    }
+  }
 }
 
 function renderPlayersList() {
@@ -892,31 +1079,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const handForwardOffsetB = -armSwing * bodyRadius * 0.24;
   const handBaseX = player.x + facingX * handForward;
   const handBaseY = player.y + facingY * handForward;
-  const paletteByCharacter: Record<CharacterId, { body: string; bodyRemote: string; hands: string; handsRemote: string; outline: string }> = {
-    boybrown: {
-      body: "#f3d8b4",
-      bodyRemote: "#e8c8a4",
-      hands: "#dfb68f",
-      handsRemote: "#d2a983",
-      outline: "#5b3d2e"
-    },
-    girlblonde: {
-      body: "#f6e2c7",
-      bodyRemote: "#ead4b7",
-      hands: "#ebd0ae",
-      handsRemote: "#ddc29f",
-      outline: "#69523d"
-    },
-    girlbrown: {
-      body: "#d8b28c",
-      bodyRemote: "#cca580",
-      hands: "#c2936a",
-      handsRemote: "#b58660",
-      outline: "#4b3324"
-    }
-  };
-  const palette = paletteByCharacter[player.characterId] ?? paletteByCharacter[DEFAULT_CHARACTER_ID];
-  const outlineColor = palette.outline;
+  const outlineColor = "#323254";
   const outlineWidth = Math.max(2, Math.round(bodyRadius * 0.13));
   const eyeRadius = Math.max(2.2, bodyRadius * 0.16);
   const eyeForward = bodyRadius * 0.34;
@@ -930,7 +1093,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.fill();
 
   // Draw hands first so the body overlaps them.
-  context.fillStyle = isLocal ? palette.hands : palette.handsRemote;
+  context.fillStyle = isLocal ? "#ffffff" : "#f2f2f2";
   context.beginPath();
   context.arc(
     handBaseX + sideX * handSide + facingX * handForwardOffsetA,
@@ -956,7 +1119,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.stroke();
 
   // Body last so it sits above the hands.
-  context.fillStyle = isLocal ? palette.body : palette.bodyRemote;
+  context.fillStyle = isLocal ? "#ffffff" : "#f2f2f2";
   context.beginPath();
   context.arc(player.x, player.y, bodyRadius, 0, Math.PI * 2);
   context.fill();
@@ -994,6 +1157,13 @@ function draw() {
   );
 
   mapRenderer.drawWorld(context, camera, canvas, CAMERA_ZOOM);
+
+  for (const node of resourceNodes) {
+    if (node.hp <= 0) {
+      continue;
+    }
+    drawResourceNode(node);
+  }
 
   for (const player of renderedPlayers.values()) {
     drawPlayer(player, player.id === localPlayer?.id);
@@ -1186,6 +1356,8 @@ async function joinLobby(playerName: string) {
     players.set(localPlayer.id, localPlayer);
     renderedPlayers.set(localPlayer.id, localPlayer);
     hasJoinedLobby = true;
+    generateResourceNodes();
+    updateResourcePanel();
     renderPlayersList();
     showGame();
     setStatus("Singleplayer mode (offline test)", "offline");
@@ -1216,6 +1388,8 @@ async function joinLobby(playerName: string) {
   players.set(localPlayer.id, localPlayer);
   renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
+  generateResourceNodes();
+  updateResourcePanel();
   renderPlayersList();
   showGame();
   setStatus("Connected", "online");
@@ -1276,30 +1450,8 @@ chatForm.addEventListener("submit", (event) => {
   void sendChatMessage();
 });
 
-characterDrawerToggle.addEventListener("click", () => {
-  setCharacterDrawerOpen(!characterDrawerOpen);
-});
-
-characterPicker.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-
-  const option = target.closest<HTMLButtonElement>(".character-option");
-  const nextCharacterId = option?.dataset.characterId as CharacterId | undefined;
-  if (!nextCharacterId || !characters.some((character) => character.id === nextCharacterId)) {
-    return;
-  }
-
-  selectedCharacterId = nextCharacterId;
-  if (localPlayer) {
-    localPlayer.characterId = nextCharacterId;
-    if (isFirebaseConfigured) {
-      void syncLocalPlayer();
-    }
-  }
-  renderCharacterPicker();
+chatDrawerToggle.addEventListener("click", () => {
+  setChatDrawerOpen(!chatDrawerOpen);
 });
 
 signInTab.addEventListener("click", () => {
@@ -1331,7 +1483,6 @@ signInForm.addEventListener("submit", (event) => {
 
   void (async () => {
     const { displayName } = await signInFirebaseAccount(email, password);
-    selectedCharacterId = DEFAULT_CHARACTER_ID;
     signInPassword.value = "";
     await joinLobby(displayName || email);
   })()
@@ -1402,8 +1553,7 @@ createForm.addEventListener("submit", (event) => {
 });
 
 setAuthMode("signin");
-renderCharacterPicker();
-setCharacterDrawerOpen(false);
+setChatDrawerOpen(false);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
