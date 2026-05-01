@@ -81,6 +81,43 @@ type BlockRecord = {
   placedAt?: number | object;
 };
 
+type CatState = "idle" | "wander" | "follow" | "zoomies";
+
+type CatEntity = {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  state: CatState;
+  ownerUid: string | null;
+  ownerName: string;
+  createdBy: string;
+  hue: number;
+  nextStateAt: number;
+  zoomiesUntil: number;
+  lastFedAt: number;
+  updatedAt?: number | object;
+  createdAt?: number | object;
+};
+
+type CatRecord = {
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  state?: CatState;
+  ownerUid?: string | null;
+  ownerName?: string;
+  createdBy?: string;
+  hue?: number;
+  nextStateAt?: number;
+  zoomiesUntil?: number;
+  lastFedAt?: number;
+  updatedAt?: number | object;
+  createdAt?: number | object;
+};
+
 type PeeParticle = {
   x: number;
   y: number;
@@ -460,6 +497,17 @@ const PEE_PARTICLES_PER_SECOND = 48;
 const RESOURCE_HIT_PARTICLES = 11;
 const BUILD_BLOCK_TYPES: BuildBlockType[] = ["woodWall", "stoneWall", "woodFloor", "stoneFloor", "window"];
 const SOLID_BUILD_BLOCKS = new Set<BuildBlockType>(["woodWall", "stoneWall", "window"]);
+const CAT_FEED_RANGE = 170;
+const CAT_FOLLOW_RADIUS = 220;
+const CAT_COMFORT_RADIUS = 90;
+const CAT_BASE_SPEED = 84;
+const CAT_FOLLOW_SPEED = 112;
+const CAT_ZOOMIES_SPEED = 220;
+const CAT_ZOOMIES_CHECK_INTERVAL_MS = 10000;
+const CAT_ZOOMIES_CHANCE = 0.02;
+const CAT_ZOOMIES_MIN_MS = 4000;
+const CAT_ZOOMIES_MAX_MS = 7000;
+const MAX_CATS_PER_PLAYER = 8;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -503,10 +551,16 @@ const inventory: ResourceInventory = {
 const peeParticles: PeeParticle[] = [];
 const resourceHitParticles: ResourceHitParticle[] = [];
 const blocksByCell = new Map<string, PlacedBlock>();
+const catsById = new Map<string, CatEntity>();
+const localOwnedCatIds = new Set<string>();
 let peeEmissionCarry = 0;
 let paintPanelOpen = false;
 let showHitboxes = false;
 let blocksUnsubscribe: Unsubscribe | null = null;
+let catsUnsubscribe: Unsubscribe | null = null;
+let ownedCatsUnsubscribe: Unsubscribe | null = null;
+let catSpawnComboLatched = false;
+let lastCatAiSyncAt = 0;
 const localPlayerColors: PlayerColorPalette = {
   body: "#ffffff",
   hands: "#ffffff",
@@ -609,6 +663,19 @@ window.addEventListener("keydown", (event) => {
     }
     triggerPunch();
     event.preventDefault();
+  } else if (event.code === "KeyF" && hasJoinedLobby) {
+    void feedNearestCat();
+    event.preventDefault();
+  } else if (event.code === "Digit9" || event.code === "KeyC") {
+    keys.add(event.code);
+    if (keys.has("Digit9") && keys.has("KeyC") && !catSpawnComboLatched) {
+      catSpawnComboLatched = true;
+      void spawnCatForLocalPlayer().catch((error) => {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        setStatus(`Cat spawn failed: ${message}`, "error");
+      });
+    }
+    event.preventDefault();
   } else if (
     ["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "ShiftLeft", "ShiftRight"].includes(event.code)
   ) {
@@ -622,6 +689,9 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
+  if (!keys.has("Digit9") || !keys.has("KeyC")) {
+    catSpawnComboLatched = false;
+  }
 });
 
 function drawResourceNode(node: ResourceNode) {
@@ -994,6 +1064,18 @@ function blockRef(cellId: string) {
   return ref(database, `rooms/lobby/blocks/${cellId}`);
 }
 
+function catsRef() {
+  return ref(database, "rooms/lobby/cats");
+}
+
+function catRef(catId: string) {
+  return ref(database, `rooms/lobby/cats/${catId}`);
+}
+
+function userOwnedCatsRef(userId: string) {
+  return ref(database, `users/${userId}/ownedCats`);
+}
+
 function kickedPlayerRef(playerId: string) {
   return ref(database, `rooms/lobby/kicked/${playerId}`);
 }
@@ -1190,6 +1272,208 @@ async function removeBlockAtCell(gx: number, gy: number) {
     const message = error instanceof Error ? error.message : "Unknown error";
     setStatus(`Build remove failed: ${message}`, "error");
   }
+}
+
+function randomRange(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function getOwnerPlayer(cat: CatEntity) {
+  if (!cat.ownerUid) {
+    return null;
+  }
+  return players.get(cat.ownerUid) ?? null;
+}
+
+function countLocalOwnedCats() {
+  if (!localPlayer) {
+    return 0;
+  }
+  let total = 0;
+  for (const cat of catsById.values()) {
+    if (cat.ownerUid === localPlayer.id) {
+      total += 1;
+    }
+  }
+  return total;
+}
+
+async function spawnCatForLocalPlayer() {
+  if (!localPlayer || !hasJoinedLobby) {
+    return;
+  }
+  if (countLocalOwnedCats() >= MAX_CATS_PER_PLAYER) {
+    setStatus(`Cat cap reached (${MAX_CATS_PER_PLAYER}).`, "error");
+    return;
+  }
+  const catId = `cat-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const spawnDistance = randomRange(62, 128);
+  const spawnAngle = Math.random() * Math.PI * 2;
+  const spawnX = clamp(localPlayer.x + Math.cos(spawnAngle) * spawnDistance, 24, world.width - 24);
+  const spawnY = clamp(localPlayer.y + Math.sin(spawnAngle) * spawnDistance, 24, world.height - 24);
+  const now = Date.now();
+  const cat: CatRecord = {
+    x: Math.round(spawnX),
+    y: Math.round(spawnY),
+    vx: 0,
+    vy: 0,
+    state: "idle",
+    ownerUid: null,
+    ownerName: "",
+    createdBy: localPlayer.id,
+    hue: Math.floor(randomRange(10, 45)),
+    nextStateAt: now + randomRange(900, 2200),
+    zoomiesUntil: 0,
+    lastFedAt: 0,
+    updatedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  };
+  await set(catRef(catId), cat);
+}
+
+function findNearestCatToPlayer(range: number) {
+  if (!localPlayer) {
+    return null;
+  }
+  let nearest: CatEntity | null = null;
+  let nearestDistance = range;
+  for (const cat of catsById.values()) {
+    const distance = Math.hypot(cat.x - localPlayer.x, cat.y - localPlayer.y);
+    if (distance <= nearestDistance) {
+      nearest = cat;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+async function feedNearestCat() {
+  if (!localPlayer || !hasJoinedLobby) {
+    return;
+  }
+  if (inventory.berries <= 0) {
+    setStatus("Need at least 1 berry to feed a cat.", "error");
+    return;
+  }
+  const cat = findNearestCatToPlayer(CAT_FEED_RANGE);
+  if (!cat) {
+    setStatus("No cat close enough to feed.", "offline");
+    return;
+  }
+  inventory.berries = Math.max(0, inventory.berries - 1);
+  updateResourcePanel();
+  const now = Date.now();
+  const ownerName = localPlayer.name;
+  try {
+    await set(catRef(cat.id), {
+      ...cat,
+      ownerUid: localPlayer.id,
+      ownerName,
+      lastFedAt: now,
+      state: "follow",
+      updatedAt: serverTimestamp()
+    } satisfies CatRecord);
+    await set(ref(database, `users/${localPlayer.id}/ownedCats/${cat.id}`), true);
+    setStatus("You fed a cat. It follows you now!", "online");
+  } catch (error) {
+    inventory.berries += 1;
+    updateResourcePanel();
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Feeding failed: ${message}`, "error");
+  }
+}
+
+async function syncOwnedCatsIndex() {
+  if (!localPlayer || !isFirebaseConfigured) {
+    return;
+  }
+  const desired = new Set<string>();
+  for (const cat of catsById.values()) {
+    if (cat.ownerUid === localPlayer.id) {
+      desired.add(cat.id);
+    }
+  }
+  for (const id of localOwnedCatIds) {
+    if (!desired.has(id)) {
+      void remove(ref(database, `users/${localPlayer.id}/ownedCats/${id}`));
+    }
+  }
+  for (const id of desired) {
+    if (!localOwnedCatIds.has(id)) {
+      void set(ref(database, `users/${localPlayer.id}/ownedCats/${id}`), true);
+    }
+  }
+}
+
+function updateCats(deltaSeconds: number, frameAt: number) {
+  for (const cat of catsById.values()) {
+    const owner = getOwnerPlayer(cat);
+    const ownerOnline = Boolean(owner);
+    const now = Date.now();
+    if (ownerOnline && cat.state !== "zoomies" && frameAt - lastCatAiSyncAt >= CAT_ZOOMIES_CHECK_INTERVAL_MS) {
+      if (Math.random() < CAT_ZOOMIES_CHANCE) {
+        cat.state = "zoomies";
+        cat.zoomiesUntil = now + randomRange(CAT_ZOOMIES_MIN_MS, CAT_ZOOMIES_MAX_MS);
+      }
+    }
+
+    if (cat.state === "zoomies") {
+      if (now >= cat.zoomiesUntil) {
+        cat.state = ownerOnline ? "follow" : "idle";
+        cat.zoomiesUntil = 0;
+      } else {
+        const angle = Math.random() * Math.PI * 2;
+        cat.vx += Math.cos(angle) * CAT_ZOOMIES_SPEED * 0.6 * deltaSeconds;
+        cat.vy += Math.sin(angle) * CAT_ZOOMIES_SPEED * 0.6 * deltaSeconds;
+      }
+    } else if (owner) {
+      const dx = owner.x - cat.x;
+      const dy = owner.y - cat.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > CAT_FOLLOW_RADIUS) {
+        const nx = dx / Math.max(distance, 1);
+        const ny = dy / Math.max(distance, 1);
+        cat.vx += nx * CAT_FOLLOW_SPEED * deltaSeconds;
+        cat.vy += ny * CAT_FOLLOW_SPEED * deltaSeconds;
+        cat.state = "follow";
+      } else if (distance < CAT_COMFORT_RADIUS) {
+        if (cat.nextStateAt <= now) {
+          cat.nextStateAt = now + randomRange(900, 2000);
+          const angle = Math.random() * Math.PI * 2;
+          cat.vx += Math.cos(angle) * CAT_BASE_SPEED * 0.25;
+          cat.vy += Math.sin(angle) * CAT_BASE_SPEED * 0.25;
+          cat.state = "idle";
+        }
+      } else {
+        const nx = dx / Math.max(distance, 1);
+        const ny = dy / Math.max(distance, 1);
+        cat.vx += nx * CAT_BASE_SPEED * deltaSeconds * 0.5;
+        cat.vy += ny * CAT_BASE_SPEED * deltaSeconds * 0.5;
+        cat.state = "wander";
+      }
+    } else {
+      if (cat.nextStateAt <= now) {
+        cat.nextStateAt = now + randomRange(1200, 2800);
+        const angle = Math.random() * Math.PI * 2;
+        cat.vx += Math.cos(angle) * CAT_BASE_SPEED * 0.5;
+        cat.vy += Math.sin(angle) * CAT_BASE_SPEED * 0.5;
+        cat.state = "wander";
+      }
+    }
+
+    const damping = Math.exp(-3.8 * deltaSeconds);
+    cat.vx *= damping;
+    cat.vy *= damping;
+    const speed = Math.hypot(cat.vx, cat.vy);
+    const maxSpeed = cat.state === "zoomies" ? CAT_ZOOMIES_SPEED : CAT_FOLLOW_SPEED;
+    if (speed > maxSpeed) {
+      cat.vx = (cat.vx / speed) * maxSpeed;
+      cat.vy = (cat.vy / speed) * maxSpeed;
+    }
+    cat.x = clamp(cat.x + cat.vx * deltaSeconds, 20, world.width - 20);
+    cat.y = clamp(cat.y + cat.vy * deltaSeconds, 20, world.height - 20);
+  }
+  lastCatAiSyncAt = frameAt;
 }
 
 function updateResourcePanel() {
@@ -1479,6 +1763,68 @@ function subscribeToBlocks() {
   );
 }
 
+function subscribeToCats() {
+  catsUnsubscribe?.();
+  catsUnsubscribe = onValue(
+    catsRef(),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, CatRecord> | null;
+      catsById.clear();
+      if (!records) {
+        return;
+      }
+      for (const [id, record] of Object.entries(records)) {
+        if (!record) {
+          continue;
+        }
+        catsById.set(id, {
+          id,
+          x: clamp(record.x ?? world.width / 2, 20, world.width - 20),
+          y: clamp(record.y ?? world.height / 2, 20, world.height - 20),
+          vx: record.vx ?? 0,
+          vy: record.vy ?? 0,
+          state: record.state ?? "idle",
+          ownerUid: record.ownerUid ?? null,
+          ownerName: record.ownerName ?? "",
+          createdBy: record.createdBy ?? "unknown",
+          hue: clamp(record.hue ?? 24, 0, 360),
+          nextStateAt: record.nextStateAt ?? Date.now() + randomRange(800, 1600),
+          zoomiesUntil: record.zoomiesUntil ?? 0,
+          lastFedAt: record.lastFedAt ?? 0,
+          updatedAt: record.updatedAt,
+          createdAt: record.createdAt
+        });
+      }
+    },
+    (error) => {
+      setStatus(`Cats failed: ${error.message}`, "error");
+    }
+  );
+}
+
+function subscribeToOwnedCats() {
+  if (!localPlayer || !isFirebaseConfigured) {
+    return;
+  }
+  ownedCatsUnsubscribe?.();
+  ownedCatsUnsubscribe = onValue(
+    userOwnedCatsRef(localPlayer.id),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, true> | null;
+      localOwnedCatIds.clear();
+      if (!records) {
+        return;
+      }
+      for (const catId of Object.keys(records)) {
+        localOwnedCatIds.add(catId);
+      }
+    },
+    (error) => {
+      setStatus(`Owned cats failed: ${error.message}`, "error");
+    }
+  );
+}
+
 async function sendChatMessage() {
   if (!isFirebaseConfigured) {
     return;
@@ -1523,6 +1869,37 @@ async function syncLocalPlayer() {
   };
 
   await set(playerRef(localPlayer.id), record);
+}
+
+async function syncLocalOwnedCats() {
+  if (!localPlayer || !isFirebaseConfigured) {
+    return;
+  }
+  const syncs: Promise<void>[] = [];
+  for (const cat of catsById.values()) {
+    if (cat.ownerUid !== localPlayer.id) {
+      continue;
+    }
+    syncs.push(
+      set(catRef(cat.id), {
+        x: Math.round(cat.x),
+        y: Math.round(cat.y),
+        vx: cat.vx,
+        vy: cat.vy,
+        state: cat.state,
+        ownerUid: cat.ownerUid,
+        ownerName: cat.ownerName,
+        createdBy: cat.createdBy,
+        hue: cat.hue,
+        nextStateAt: Math.round(cat.nextStateAt),
+        zoomiesUntil: Math.round(cat.zoomiesUntil),
+        lastFedAt: Math.round(cat.lastFedAt),
+        updatedAt: serverTimestamp(),
+        createdAt: cat.createdAt ?? serverTimestamp()
+      } satisfies CatRecord)
+    );
+  }
+  await Promise.all(syncs);
 }
 
 function updateLocalPlayer(deltaSeconds: number) {
@@ -1781,6 +2158,47 @@ function drawBuildPreview() {
   context.strokeRect(minX + 1.5, minY + 1.5, BUILD_GRID_SIZE - 3, BUILD_GRID_SIZE - 3);
 }
 
+function drawCats() {
+  for (const cat of catsById.values()) {
+    const bodyRadius = 22;
+    const earSize = 9;
+    const hue = cat.hue % 360;
+    const catColor = `hsl(${hue}deg 40% 62%)`;
+    context.fillStyle = catColor;
+    context.beginPath();
+    context.arc(cat.x, cat.y, bodyRadius, 0, Math.PI * 2);
+    context.fill();
+
+    context.beginPath();
+    context.moveTo(cat.x - 10, cat.y - 16);
+    context.lineTo(cat.x - 15, cat.y - 16 - earSize);
+    context.lineTo(cat.x - 4, cat.y - 20);
+    context.closePath();
+    context.fill();
+
+    context.beginPath();
+    context.moveTo(cat.x + 10, cat.y - 16);
+    context.lineTo(cat.x + 15, cat.y - 16 - earSize);
+    context.lineTo(cat.x + 4, cat.y - 20);
+    context.closePath();
+    context.fill();
+
+    context.fillStyle = "#101217";
+    context.beginPath();
+    context.arc(cat.x - 5, cat.y - 3, 2.2, 0, Math.PI * 2);
+    context.arc(cat.x + 5, cat.y - 3, 2.2, 0, Math.PI * 2);
+    context.fill();
+
+    if (cat.state === "zoomies") {
+      context.strokeStyle = "rgba(255, 236, 125, 0.9)";
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(cat.x, cat.y, bodyRadius + 6, 0, Math.PI * 2);
+      context.stroke();
+    }
+  }
+}
+
 function updateRenderedPlayers(deltaSeconds: number) {
   renderedPlayers.clear();
 
@@ -1969,6 +2387,7 @@ function draw() {
   mapRenderer.drawWorld(context, camera, canvas, CAMERA_ZOOM);
   drawPlacedBlocks();
   drawBuildPreview();
+  drawCats();
 
   for (const player of renderedPlayers.values()) {
     drawPlayer(player, player.id === localPlayer?.id);
@@ -2006,6 +2425,19 @@ function draw() {
     );
   }
 
+  for (const cat of catsById.values()) {
+    if (
+      cat.x < viewportLeft - 50 ||
+      cat.x > viewportRight + 50 ||
+      cat.y < viewportTop - 50 ||
+      cat.y > viewportBottom + 50
+    ) {
+      continue;
+    }
+    const label = cat.ownerName ? `${cat.ownerName}'s cat` : "Cat";
+    context.fillText(label, worldToScreenX(camera.x, cat.x), worldToScreenY(camera.y, cat.y - 32));
+  }
+
   mapRenderer.drawMinimap(context, {
     x: MINIMAP_MARGIN,
     y: canvas.height - MINIMAP_HEIGHT - MINIMAP_MARGIN,
@@ -2023,6 +2455,7 @@ function tick(frameAt: number) {
   lastFrameAt = frameAt;
 
   updateLocalPlayer(deltaSeconds);
+  updateCats(deltaSeconds, frameAt);
   updateResourceHitParticles(deltaSeconds);
   updatePeeParticles(deltaSeconds);
   updateRenderedPlayers(deltaSeconds);
@@ -2030,9 +2463,13 @@ function tick(frameAt: number) {
 
   if (isFirebaseConfigured && hasJoinedLobby && localPlayer && frameAt - lastSyncAt > SYNC_INTERVAL_MS) {
     lastSyncAt = frameAt;
-    void syncLocalPlayer().catch((error) => {
-      setStatus(`Sync failed: ${error.message}`, "error");
-    });
+    void Promise.all([syncLocalPlayer(), syncLocalOwnedCats()])
+      .then(() => {
+        void syncOwnedCatsIndex();
+      })
+      .catch((error) => {
+        setStatus(`Sync failed: ${error.message}`, "error");
+      });
   }
 
   draw();
@@ -2177,6 +2614,8 @@ async function joinLobby(playerName: string) {
     hasJoinedLobby = true;
     setBuildInventoryOpen(false);
     blocksByCell.clear();
+    catsById.clear();
+    localOwnedCatIds.clear();
     generateResourceNodes();
     updateResourcePanel();
     renderPlayersList();
@@ -2223,6 +2662,8 @@ async function joinLobby(playerName: string) {
   subscribeToKickedPlayers();
   subscribeToChat();
   subscribeToBlocks();
+  subscribeToCats();
+  subscribeToOwnedCats();
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {

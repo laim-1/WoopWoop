@@ -58,6 +58,23 @@ For early local testing only, you can use permissive database rules:
             ".write": "auth != null && ($cellId.matches(/^[0-9]+:[0-9]+$/))",
             ".validate": "!newData.exists() || (newData.hasChildren(['type','placedBy','placedAt']) && newData.child('type').isString() && (newData.child('type').val() == 'woodWall' || newData.child('type').val() == 'stoneWall' || newData.child('type').val() == 'woodFloor' || newData.child('type').val() == 'stoneFloor' || newData.child('type').val() == 'window') && newData.child('placedBy').isString() && newData.child('placedBy').val().length <= 128)"
           }
+        },
+        "cats": {
+          "$catId": {
+            ".write": "auth != null",
+            ".validate": "!newData.exists() || (newData.hasChildren(['x','y','vx','vy','state','ownerUid','ownerName','createdBy','hue','nextStateAt','zoomiesUntil','lastFedAt','updatedAt']) && newData.child('state').isString() && (newData.child('state').val() == 'idle' || newData.child('state').val() == 'wander' || newData.child('state').val() == 'follow' || newData.child('state').val() == 'zoomies') && newData.child('ownerName').isString() && newData.child('createdBy').isString())"
+          }
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        "ownedCats": {
+          "$catId": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "!newData.exists() || newData.val() == true"
+          }
         }
       }
     }
