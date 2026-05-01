@@ -1244,8 +1244,8 @@ async function loadLocalPaintColors(userId: string) {
   }
   try {
     const snapshot = await get(userPaintProfileRef(userId));
-    const profile = snapshot.val() as PlayerPaintProfileRecord | null;
-    const colors = normalizePaintColors(profile?.paintColors);
+    const profile = snapshot.val() as PlayerPaintProfileRecord["paintColors"] | null;
+    const colors = normalizePaintColors(profile);
     applyLocalPaintColors(colors);
   } catch {
     // Best effort: keep defaults if profile lookup fails.
