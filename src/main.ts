@@ -1,7 +1,7 @@
 import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount } from "./firebase";
-import { createGameMapRenderer, loadGameMap } from "./map";
+import { WORLD_GRID_SIZE, createGameMapRenderer, loadGameMap } from "./map";
 import "./styles.css";
 
 type Area = "forest";
@@ -62,6 +62,23 @@ type ResourceInventory = {
   wood: number;
   stone: number;
   berries: number;
+};
+
+type BuildBlockType = "woodWall" | "stoneWall" | "woodFloor" | "stoneFloor" | "window";
+
+type PlacedBlock = {
+  id: string;
+  gx: number;
+  gy: number;
+  type: BuildBlockType;
+  placedBy: string;
+  placedAt?: number | object;
+};
+
+type BlockRecord = {
+  type?: BuildBlockType;
+  placedBy?: string;
+  placedAt?: number | object;
 };
 
 type PeeParticle = {
@@ -243,6 +260,15 @@ app.innerHTML = `
       </div>
     </section>
 
+    <section class="build-hotbar is-hidden" id="build-hotbar" aria-label="Build tools">
+      <button type="button" data-build-slot="0">1 Wood Wall</button>
+      <button type="button" data-build-slot="1">2 Stone Wall</button>
+      <button type="button" data-build-slot="2">3 Wood Floor</button>
+      <button type="button" data-build-slot="3">4 Stone Floor</button>
+      <button type="button" data-build-slot="4">5 Window</button>
+      <span class="build-hotbar-hint">B toggle, LMB place, RMB remove</span>
+    </section>
+
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
 `;
@@ -285,6 +311,7 @@ const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
 const chatInputElement = document.querySelector<HTMLInputElement>("#chat-input");
 const chatDrawerElement = document.querySelector<HTMLElement>("#chat-drawer");
 const chatDrawerToggleElement = document.querySelector<HTMLButtonElement>("#chat-drawer-toggle");
+const buildHotbarElement = document.querySelector<HTMLElement>("#build-hotbar");
 
 if (
   !canvasElement ||
@@ -324,7 +351,8 @@ if (
   !chatFormElement ||
   !chatInputElement ||
   !chatDrawerElement ||
-  !chatDrawerToggleElement
+  !chatDrawerToggleElement ||
+  !buildHotbarElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -373,6 +401,7 @@ const chatForm = chatFormElement;
 const chatInput = chatInputElement;
 const chatDrawer = chatDrawerElement;
 const chatDrawerToggle = chatDrawerToggleElement;
+const buildHotbar = buildHotbarElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
@@ -408,6 +437,8 @@ const CHAT_LIMIT = 20;
 const CHAT_MAX_LENGTH = 120;
 const DEFAULT_CHARACTER_ID: CharacterId = "boybrown";
 const TILE_SIZE = 96;
+const BUILD_GRID_SIZE = WORLD_GRID_SIZE;
+const BUILD_ACTION_COOLDOWN_MS = 80;
 const WALK_SPEED = 220;
 const RUN_SPEED = 320;
 const MOVE_ACCELERATION = 8;
@@ -426,6 +457,8 @@ const PUNCH_REACH = 52;
 const PUNCH_EXTEND_PHASE = 0.34;
 const PEE_PARTICLES_PER_SECOND = 48;
 const RESOURCE_HIT_PARTICLES = 11;
+const BUILD_BLOCK_TYPES: BuildBlockType[] = ["woodWall", "stoneWall", "woodFloor", "stoneFloor", "window"];
+const SOLID_BUILD_BLOCKS = new Set<BuildBlockType>(["woodWall", "stoneWall", "window"]);
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -449,6 +482,10 @@ let devtoolsUnlocked = false;
 let hasJoinedLobby = false;
 let spawnPointIndex = 0;
 let chatDrawerOpen = false;
+let buildModeEnabled = false;
+let selectedBuildSlot = 0;
+let hoveredBuildCell: { gx: number; gy: number } | null = null;
+let lastBuildActionAt = 0;
 let lastAttackAt = 0;
 let lastPunchAt = -PUNCH_DURATION_MS;
 let activePunchSide: -1 | 1 = 1;
@@ -463,9 +500,11 @@ const inventory: ResourceInventory = {
 };
 const peeParticles: PeeParticle[] = [];
 const resourceHitParticles: ResourceHitParticle[] = [];
+const blocksByCell = new Map<string, PlacedBlock>();
 let peeEmissionCarry = 0;
 let paintPanelOpen = false;
 let showHitboxes = false;
+let blocksUnsubscribe: Unsubscribe | null = null;
 const localPlayerColors: PlayerColorPalette = {
   body: "#ffffff",
   hands: "#ffffff",
@@ -486,6 +525,32 @@ function worldToScreenX(cameraX: number, worldX: number) {
 
 function worldToScreenY(cameraY: number, worldY: number) {
   return (worldY - cameraY) * CAMERA_ZOOM + canvas.height / 2;
+}
+
+function worldToGrid(worldCoordinate: number) {
+  return Math.floor(worldCoordinate / BUILD_GRID_SIZE);
+}
+
+function gridToWorldCenter(gridCoordinate: number) {
+  return gridCoordinate * BUILD_GRID_SIZE + BUILD_GRID_SIZE / 2;
+}
+
+function cellIdFromGrid(gx: number, gy: number) {
+  return `${gx}:${gy}`;
+}
+
+function parseCellId(cellId: string) {
+  const [gxText, gyText] = cellId.split(":");
+  const gx = Number(gxText);
+  const gy = Number(gyText);
+  if (!Number.isFinite(gx) || !Number.isFinite(gy)) {
+    return null;
+  }
+  return { gx, gy };
+}
+
+function isInsideBuildGrid(gx: number, gy: number) {
+  return gx >= 0 && gy >= 0 && gx * BUILD_GRID_SIZE < world.width && gy * BUILD_GRID_SIZE < world.height;
 }
 
 function getCameraCenter() {
@@ -528,10 +593,23 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Enter" && hasJoinedLobby) {
     chatInput.focus();
     event.preventDefault();
+  } else if (event.code === "KeyB" && hasJoinedLobby) {
+    setBuildModeEnabled(!buildModeEnabled);
+    event.preventDefault();
+  } else if (["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].includes(event.code)) {
+    selectedBuildSlot = clamp(Number(event.code.replace("Digit", "")) - 1, 0, BUILD_BLOCK_TYPES.length - 1);
+    updateBuildHotbarSelection();
+    event.preventDefault();
   } else if (event.code === "KeyE" || event.code === "Space") {
+    if (buildModeEnabled) {
+      event.preventDefault();
+      return;
+    }
     triggerPunch();
     event.preventDefault();
-  } else if (["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "ShiftLeft", "ShiftRight"].includes(event.code)) {
+  } else if (
+    ["KeyW", "KeyA", "KeyS", "KeyD", "KeyP", "ShiftLeft", "ShiftRight"].includes(event.code)
+  ) {
     keys.add(event.code);
 
     if (event.code.startsWith("Key")) {
@@ -906,6 +984,14 @@ function chatMessageRef(messageId: string) {
   return ref(database, `rooms/lobby/chat/${messageId}`);
 }
 
+function blocksRef() {
+  return ref(database, "rooms/lobby/blocks");
+}
+
+function blockRef(cellId: string) {
+  return ref(database, `rooms/lobby/blocks/${cellId}`);
+}
+
 function kickedPlayerRef(playerId: string) {
   return ref(database, `rooms/lobby/kicked/${playerId}`);
 }
@@ -961,6 +1047,7 @@ function updateOverlayPanels() {
   resourcePanel.classList.toggle("is-hidden", !hasJoinedLobby);
   paintControls.classList.toggle("is-hidden", !hasJoinedLobby);
   hudResources.classList.toggle("is-hidden", !hasJoinedLobby);
+  buildHotbar.classList.toggle("is-hidden", !hasJoinedLobby);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -974,6 +1061,102 @@ function setPaintPanelOpen(open: boolean) {
   paintPanelOpen = open;
   paintControlsPanel.classList.toggle("is-hidden", !open);
   paintControlsToggle.setAttribute("aria-expanded", String(open));
+}
+
+function selectedBuildType() {
+  return BUILD_BLOCK_TYPES[selectedBuildSlot] ?? BUILD_BLOCK_TYPES[0];
+}
+
+function updateBuildHotbarSelection() {
+  const buttons = buildHotbar.querySelectorAll<HTMLButtonElement>("[data-build-slot]");
+  for (const button of buttons) {
+    const slot = Number(button.dataset.buildSlot ?? -1);
+    const selected = slot === selectedBuildSlot;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function setBuildModeEnabled(enabled: boolean) {
+  buildModeEnabled = enabled && hasJoinedLobby;
+  buildHotbar.classList.toggle("is-build-mode", buildModeEnabled);
+  if (!buildModeEnabled) {
+    hoveredBuildCell = null;
+  }
+}
+
+function getHoveredBuildCellFromPointer(event: PointerEvent) {
+  const camera = getCameraCenter();
+  const worldX = screenToWorldX(camera.x, event.clientX);
+  const worldY = screenToWorldY(camera.y, event.clientY);
+  const gx = worldToGrid(worldX);
+  const gy = worldToGrid(worldY);
+  if (!isInsideBuildGrid(gx, gy)) {
+    return null;
+  }
+  return { gx, gy };
+}
+
+function isCellOccupiedByPlayer(gx: number, gy: number) {
+  const minX = gx * BUILD_GRID_SIZE;
+  const minY = gy * BUILD_GRID_SIZE;
+  const maxX = minX + BUILD_GRID_SIZE;
+  const maxY = minY + BUILD_GRID_SIZE;
+  for (const player of players.values()) {
+    if (player.x >= minX && player.x <= maxX && player.y >= minY && player.y <= maxY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function canPlaceBlockAt(gx: number, gy: number) {
+  if (!isInsideBuildGrid(gx, gy)) {
+    return false;
+  }
+  if (isCellOccupiedByPlayer(gx, gy)) {
+    return false;
+  }
+  return true;
+}
+
+async function placeSelectedBlockAtCell(gx: number, gy: number) {
+  if (!localPlayer || !canPlaceBlockAt(gx, gy)) {
+    return;
+  }
+  const now = performance.now();
+  if (now - lastBuildActionAt < BUILD_ACTION_COOLDOWN_MS) {
+    return;
+  }
+  lastBuildActionAt = now;
+  const cellId = cellIdFromGrid(gx, gy);
+  const type = selectedBuildType();
+  if (!isFirebaseConfigured) {
+    blocksByCell.set(cellId, { id: cellId, gx, gy, type, placedBy: localPlayer.id, placedAt: Date.now() });
+    return;
+  }
+  await set(blockRef(cellId), {
+    type,
+    placedBy: localPlayer.id,
+    placedAt: serverTimestamp()
+  } satisfies BlockRecord);
+}
+
+async function removeBlockAtCell(gx: number, gy: number) {
+  if (!localPlayer || !isInsideBuildGrid(gx, gy)) {
+    return;
+  }
+  const now = performance.now();
+  if (now - lastBuildActionAt < BUILD_ACTION_COOLDOWN_MS) {
+    return;
+  }
+  lastBuildActionAt = now;
+  const cellId = cellIdFromGrid(gx, gy);
+  if (!isFirebaseConfigured) {
+    blocksByCell.delete(cellId);
+    return;
+  }
+  await remove(blockRef(cellId));
 }
 
 function updateResourcePanel() {
@@ -1229,6 +1412,40 @@ function subscribeToChat() {
   );
 }
 
+function subscribeToBlocks() {
+  blocksUnsubscribe?.();
+  blocksUnsubscribe = onValue(
+    blocksRef(),
+    (snapshot) => {
+      const records = snapshot.val() as Record<string, BlockRecord> | null;
+      blocksByCell.clear();
+      if (!records) {
+        return;
+      }
+      for (const [cellId, record] of Object.entries(records)) {
+        if (!record || !record.type || !BUILD_BLOCK_TYPES.includes(record.type)) {
+          continue;
+        }
+        const parsed = parseCellId(cellId);
+        if (!parsed || !isInsideBuildGrid(parsed.gx, parsed.gy)) {
+          continue;
+        }
+        blocksByCell.set(cellId, {
+          id: cellId,
+          gx: parsed.gx,
+          gy: parsed.gy,
+          type: record.type,
+          placedBy: record.placedBy ?? "unknown",
+          placedAt: record.placedAt
+        });
+      }
+    },
+    (error) => {
+      setStatus(`Blocks failed: ${error.message}`, "error");
+    }
+  );
+}
+
 async function sendChatMessage() {
   if (!isFirebaseConfigured) {
     return;
@@ -1356,6 +1573,50 @@ function updateLocalPlayer(deltaSeconds: number) {
     };
   }
 
+  // Placed blocks can be solid too (walls/windows).
+  for (const block of blocksByCell.values()) {
+    if (!SOLID_BUILD_BLOCKS.has(block.type)) {
+      continue;
+    }
+    const blockMinX = block.gx * BUILD_GRID_SIZE;
+    const blockMinY = block.gy * BUILD_GRID_SIZE;
+    const blockMaxX = blockMinX + BUILD_GRID_SIZE;
+    const blockMaxY = blockMinY + BUILD_GRID_SIZE;
+    const nearestX = clamp(moved.x, blockMinX, blockMaxX);
+    const nearestY = clamp(moved.y, blockMinY, blockMaxY);
+    const dx = moved.x - nearestX;
+    const dy = moved.y - nearestY;
+    const distance = Math.hypot(dx, dy);
+    if (distance >= world.playerRadius) {
+      continue;
+    }
+
+    if (distance > 0.001) {
+      const nx = dx / distance;
+      const ny = dy / distance;
+      moved = {
+        x: nearestX + nx * world.playerRadius,
+        y: nearestY + ny * world.playerRadius
+      };
+      continue;
+    }
+
+    const pushLeft = Math.abs(moved.x - blockMinX);
+    const pushRight = Math.abs(blockMaxX - moved.x);
+    const pushUp = Math.abs(moved.y - blockMinY);
+    const pushDown = Math.abs(blockMaxY - moved.y);
+    const minPush = Math.min(pushLeft, pushRight, pushUp, pushDown);
+    if (minPush === pushLeft) {
+      moved.x = blockMinX - world.playerRadius;
+    } else if (minPush === pushRight) {
+      moved.x = blockMaxX + world.playerRadius;
+    } else if (minPush === pushUp) {
+      moved.y = blockMinY - world.playerRadius;
+    } else {
+      moved.y = blockMaxY + world.playerRadius;
+    }
+  }
+
   localPlayer.x = moved.x;
   localPlayer.y = moved.y;
 }
@@ -1447,6 +1708,44 @@ function drawResourceHitParticles() {
     context.arc(particle.x, particle.y, particle.size * (0.65 + alpha * 0.35), 0, Math.PI * 2);
     context.fill();
   }
+}
+
+function drawPlacedBlocks() {
+  const fillByType: Record<BuildBlockType, string> = {
+    woodWall: "#8b5a38",
+    stoneWall: "#8f959d",
+    woodFloor: "#a57a4f",
+    stoneFloor: "#aeb5be",
+    window: "#9dcce8"
+  };
+  for (const block of blocksByCell.values()) {
+    const centerX = gridToWorldCenter(block.gx);
+    const centerY = gridToWorldCenter(block.gy);
+    const minX = centerX - BUILD_GRID_SIZE / 2;
+    const minY = centerY - BUILD_GRID_SIZE / 2;
+    context.fillStyle = fillByType[block.type];
+    context.fillRect(minX + 2, minY + 2, BUILD_GRID_SIZE - 4, BUILD_GRID_SIZE - 4);
+    context.strokeStyle = "rgba(20, 20, 24, 0.55)";
+    context.lineWidth = 2;
+    context.strokeRect(minX + 1.5, minY + 1.5, BUILD_GRID_SIZE - 3, BUILD_GRID_SIZE - 3);
+  }
+}
+
+function drawBuildPreview() {
+  if (!buildModeEnabled || !hoveredBuildCell) {
+    return;
+  }
+  const { gx, gy } = hoveredBuildCell;
+  const centerX = gridToWorldCenter(gx);
+  const centerY = gridToWorldCenter(gy);
+  const minX = centerX - BUILD_GRID_SIZE / 2;
+  const minY = centerY - BUILD_GRID_SIZE / 2;
+  const valid = canPlaceBlockAt(gx, gy);
+  context.fillStyle = valid ? "rgba(109, 220, 142, 0.28)" : "rgba(240, 90, 90, 0.3)";
+  context.fillRect(minX + 2, minY + 2, BUILD_GRID_SIZE - 4, BUILD_GRID_SIZE - 4);
+  context.strokeStyle = valid ? "rgba(109, 220, 142, 0.95)" : "rgba(240, 90, 90, 0.95)";
+  context.lineWidth = 2;
+  context.strokeRect(minX + 1.5, minY + 1.5, BUILD_GRID_SIZE - 3, BUILD_GRID_SIZE - 3);
 }
 
 function updateRenderedPlayers(deltaSeconds: number) {
@@ -1635,6 +1934,8 @@ function draw() {
   );
 
   mapRenderer.drawWorld(context, camera, canvas, CAMERA_ZOOM);
+  drawPlacedBlocks();
+  drawBuildPreview();
 
   for (const player of renderedPlayers.values()) {
     drawPlayer(player, player.id === localPlayer?.id);
@@ -1768,6 +2069,7 @@ function subscribeToKickedPlayers() {
         localPlayer = null;
         hasJoinedLobby = false;
         keys.clear();
+        setBuildModeEnabled(false);
         void remove(playerRef(kickedPlayer.id));
         setStatus("You were kicked from the lobby.", "error");
       }
@@ -1840,6 +2142,7 @@ async function joinLobby(playerName: string) {
     players.set(localPlayer.id, localPlayer);
     renderedPlayers.set(localPlayer.id, localPlayer);
     hasJoinedLobby = true;
+    blocksByCell.clear();
     generateResourceNodes();
     updateResourcePanel();
     renderPlayersList();
@@ -1872,6 +2175,7 @@ async function joinLobby(playerName: string) {
   players.set(localPlayer.id, localPlayer);
   renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
+  blocksByCell.clear();
   generateResourceNodes();
   updateResourcePanel();
   renderPlayersList();
@@ -1883,6 +2187,7 @@ async function joinLobby(playerName: string) {
   subscribeToLobby();
   subscribeToKickedPlayers();
   subscribeToChat();
+  subscribeToBlocks();
 
   window.addEventListener("beforeunload", () => {
     if (localPlayer) {
@@ -1965,9 +2270,55 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  if (buildModeEnabled) {
+    const hovered = getHoveredBuildCellFromPointer(event);
+    if (hovered) {
+      if (event.button === 2) {
+        void removeBlockAtCell(hovered.gx, hovered.gy);
+      } else if (event.button === 0) {
+        void placeSelectedBlockAtCell(hovered.gx, hovered.gy);
+      }
+    }
+    event.preventDefault();
+    return;
+  }
+
+  if (event.button !== 0) {
+    return;
+  }
+
   triggerPunch();
   event.preventDefault();
 });
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!buildModeEnabled || !hasJoinedLobby) {
+    hoveredBuildCell = null;
+    return;
+  }
+  hoveredBuildCell = getHoveredBuildCellFromPointer(event);
+});
+
+canvas.addEventListener("pointerleave", () => {
+  hoveredBuildCell = null;
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  if (!buildModeEnabled) {
+    return;
+  }
+  event.preventDefault();
+});
+
+const buildHotbarButtons = buildHotbar.querySelectorAll<HTMLButtonElement>("[data-build-slot]");
+for (const button of buildHotbarButtons) {
+  button.addEventListener("click", () => {
+    const slot = Number(button.dataset.buildSlot ?? "0");
+    selectedBuildSlot = clamp(slot, 0, BUILD_BLOCK_TYPES.length - 1);
+    updateBuildHotbarSelection();
+    setBuildModeEnabled(true);
+  });
+}
 signInTab.addEventListener("click", () => {
   setAuthMode("signin");
 });
@@ -2067,6 +2418,8 @@ createForm.addEventListener("submit", (event) => {
 setAuthMode("signin");
 setChatDrawerOpen(false);
 setPaintPanelOpen(false);
+updateBuildHotbarSelection();
+setBuildModeEnabled(false);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");

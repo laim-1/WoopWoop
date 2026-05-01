@@ -489,7 +489,7 @@ body {
 
 .chat-drawer {
   position: absolute;
-  bottom: 1rem;
+  bottom: 4.4rem;
   left: 50%;
   transform: translateX(-50%);
   display: grid;
@@ -497,6 +497,53 @@ body {
   width: min(30rem, calc(100vw - 2rem));
   gap: 0.5rem;
   z-index: 15;
+}
+
+.build-hotbar {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 0.8rem;
+  background: rgba(38, 50, 31, 0.88);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(10px);
+  z-index: 18;
+}
+
+.build-hotbar button {
+  min-height: 2.2rem;
+  padding: 0 0.6rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 0.6rem;
+  background: rgba(24, 36, 20, 0.74);
+  color: #f2ead8;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.build-hotbar button.is-selected {
+  border-color: rgba(125, 235, 165, 0.95);
+  box-shadow: 0 0 0 2px rgba(125, 235, 165, 0.25);
+}
+
+.build-hotbar.is-build-mode {
+  border-color: rgba(125, 235, 165, 0.92);
+}
+
+.build-hotbar-hint {
+  margin-left: 0.35rem;
+  color: #d8c9aa;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .chat-drawer-toggle {
@@ -592,7 +639,8 @@ body {
   .resource-panel,
   .paint-controls,
   .chat-panel,
-  .chat-drawer {
+  .chat-drawer,
+  .build-hotbar {
     position: static;
     width: min(100vw - 2rem, 28rem);
     margin: 1rem;

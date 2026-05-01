@@ -52,6 +52,12 @@ For early local testing only, you can use permissive database rules:
           "$messageId": {
             ".write": "auth != null"
           }
+        },
+        "blocks": {
+          "$cellId": {
+            ".write": "auth != null && ($cellId.matches(/^[0-9]+:[0-9]+$/))",
+            ".validate": "!newData.exists() || (newData.hasChildren(['type','placedBy','placedAt']) && newData.child('type').isString() && (newData.child('type').val() == 'woodWall' || newData.child('type').val() == 'stoneWall' || newData.child('type').val() == 'woodFloor' || newData.child('type').val() == 'stoneFloor' || newData.child('type').val() == 'window') && newData.child('placedBy').isString() && newData.child('placedBy').val().length <= 128)"
+          }
         }
       }
     }

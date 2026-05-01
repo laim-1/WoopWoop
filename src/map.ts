@@ -1,4 +1,5 @@
 type BiomeId = "grass" | "mountain" | "desert" | "ocean";
+export const WORLD_GRID_SIZE = 96;
 
 type Camera = {
   x: number;
@@ -129,16 +130,15 @@ export function createGameMapRenderer(map: GameMap) {
   }
 
   function drawGrid(context: CanvasRenderingContext2D) {
-    const cellSize = 96;
     context.save();
     context.strokeStyle = "rgba(0, 0, 0, 0.18)";
     context.lineWidth = 1;
     context.beginPath();
-    for (let x = 0; x <= map.world.width; x += cellSize) {
+    for (let x = 0; x <= map.world.width; x += WORLD_GRID_SIZE) {
       context.moveTo(x, 0);
       context.lineTo(x, map.world.height);
     }
-    for (let y = 0; y <= map.world.height; y += cellSize) {
+    for (let y = 0; y <= map.world.height; y += WORLD_GRID_SIZE) {
       context.moveTo(0, y);
       context.lineTo(map.world.width, y);
     }
