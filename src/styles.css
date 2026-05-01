@@ -458,6 +458,62 @@ body {
   cursor: pointer;
 }
 
+.cat-debug {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(145, 221, 255, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(38, 50, 31, 0.92);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+}
+
+.cat-debug p {
+  margin: 0;
+  color: #cdefff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.cat-debug-actions {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.cat-debug-actions label {
+  color: #d8c9aa;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.cat-debug-actions input {
+  width: 3.4rem;
+  min-height: 1.85rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 0.45rem;
+  padding: 0 0.4rem;
+  background: rgba(24, 36, 20, 0.74);
+  color: #f2ead8;
+  font: inherit;
+  text-align: right;
+}
+
+.cat-debug-actions button {
+  min-height: 1.85rem;
+  border: 1px solid rgba(196, 171, 119, 0.35);
+  border-radius: 0.45rem;
+  padding: 0 0.55rem;
+  background: rgba(24, 36, 20, 0.74);
+  color: #f2ead8;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .resource-panel h2 {
   margin: 0;
   font-size: 0.9rem;

@@ -287,6 +287,14 @@ app.innerHTML = `
         <label>Hands <input id="paint-hands" type="color" value="#ffffff" /></label>
         <label>Feet <input id="paint-feet" type="color" value="#ffffff" /></label>
       </form>
+      <section class="cat-debug is-hidden" id="cat-debug">
+        <p id="cat-debug-counts">Tamed: 0 | Untamed: 0</p>
+        <div class="cat-debug-actions">
+          <label for="cat-debug-delete-count">Delete untamed</label>
+          <input id="cat-debug-delete-count" type="number" min="1" step="1" value="1" />
+          <button type="button" id="cat-debug-delete-button">Delete</button>
+        </div>
+      </section>
     </section>
 
     <section class="chat-drawer is-hidden" id="chat-drawer">
@@ -355,6 +363,10 @@ const paintControlsPanelElement = document.querySelector<HTMLFormElement>("#pain
 const paintBodyElement = document.querySelector<HTMLInputElement>("#paint-body");
 const paintHandsElement = document.querySelector<HTMLInputElement>("#paint-hands");
 const paintFeetElement = document.querySelector<HTMLInputElement>("#paint-feet");
+const catDebugElement = document.querySelector<HTMLElement>("#cat-debug");
+const catDebugCountsElement = document.querySelector<HTMLParagraphElement>("#cat-debug-counts");
+const catDebugDeleteCountElement = document.querySelector<HTMLInputElement>("#cat-debug-delete-count");
+const catDebugDeleteButtonElement = document.querySelector<HTMLButtonElement>("#cat-debug-delete-button");
 const chatPanelElement = document.querySelector<HTMLElement>("#chat-panel");
 const chatMessagesElement = document.querySelector<HTMLUListElement>("#chat-messages");
 const chatFormElement = document.querySelector<HTMLFormElement>("#chat-form");
@@ -397,6 +409,10 @@ if (
   !paintBodyElement ||
   !paintHandsElement ||
   !paintFeetElement ||
+  !catDebugElement ||
+  !catDebugCountsElement ||
+  !catDebugDeleteCountElement ||
+  !catDebugDeleteButtonElement ||
   !chatPanelElement ||
   !chatMessagesElement ||
   !chatFormElement ||
@@ -447,6 +463,10 @@ const paintControlsPanel = paintControlsPanelElement;
 const paintBodyInput = paintBodyElement;
 const paintHandsInput = paintHandsElement;
 const paintFeetInput = paintFeetElement;
+const catDebug = catDebugElement;
+const catDebugCounts = catDebugCountsElement;
+const catDebugDeleteCount = catDebugDeleteCountElement;
+const catDebugDeleteButton = catDebugDeleteButtonElement;
 const chatPanel = chatPanelElement;
 const chatMessages = chatMessagesElement;
 const chatForm = chatFormElement;
@@ -1152,6 +1172,7 @@ function updateOverlayPanels() {
   hudResources.classList.toggle("is-hidden", !hasJoinedLobby);
   buildHotbar.classList.toggle("is-hidden", !hasJoinedLobby || !buildInventoryOpen);
   catMenu.classList.toggle("is-hidden", !hasJoinedLobby || !selectedCatMenuId);
+  catDebug.classList.toggle("is-hidden", !hasJoinedLobby || !showHitboxes);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -1201,6 +1222,54 @@ function setBuildInventoryOpen(open: boolean) {
 function setCatMenuOpen(catId: string | null) {
   selectedCatMenuId = catId;
   catMenu.classList.toggle("is-hidden", !catId || !hasJoinedLobby);
+}
+
+function getCatCounts() {
+  let tamed = 0;
+  let untamed = 0;
+  for (const cat of catsById.values()) {
+    if (cat.ownerUid) {
+      tamed += 1;
+    } else {
+      untamed += 1;
+    }
+  }
+  return { tamed, untamed };
+}
+
+function updateCatDebugPanel() {
+  const { tamed, untamed } = getCatCounts();
+  catDebugCounts.textContent = `Tamed: ${tamed} | Untamed: ${untamed}`;
+  const current = Number(catDebugDeleteCount.value);
+  if (!Number.isFinite(current) || current < 1) {
+    catDebugDeleteCount.value = "1";
+  }
+  catDebugDeleteCount.max = String(Math.max(1, untamed));
+  catDebugDeleteButton.disabled = untamed <= 0;
+}
+
+async function deleteUntamedCats(requestedCount: number) {
+  if (!hasJoinedLobby) {
+    return;
+  }
+  const untamedCats = [...catsById.values()].filter((cat) => !cat.ownerUid);
+  if (untamedCats.length === 0) {
+    setStatus("No untamed cats to delete.", "offline");
+    updateCatDebugPanel();
+    return;
+  }
+  const count = Math.max(1, Math.min(requestedCount, untamedCats.length));
+  const toDelete = untamedCats.slice(0, count);
+  if (!isFirebaseConfigured) {
+    for (const cat of toDelete) {
+      catsById.delete(cat.id);
+    }
+    updateCatDebugPanel();
+    return;
+  }
+  await Promise.all(toDelete.map((cat) => remove(catRef(cat.id))));
+  setStatus(`Deleted ${count} untamed cat${count === 1 ? "" : "s"}.`, "online");
+  updateCatDebugPanel();
 }
 
 function getHoveredBuildCellFromPointer(event: PointerEvent) {
@@ -1493,7 +1562,13 @@ function updateCats(deltaSeconds: number, frameAt: number) {
     let targetVelocityX = 0;
     let targetVelocityY = 0;
 
-    if (cat.state === "zoomies") {
+    if (cat.behavior === "stay") {
+      cat.state = "idle";
+      cat.zoomiesUntil = 0;
+      cat.vx = 0;
+      cat.vy = 0;
+      continue;
+    } else if (cat.state === "zoomies") {
       if (now >= cat.zoomiesUntil) {
         cat.state = ownerOnline ? "follow" : "idle";
         cat.zoomiesUntil = 0;
@@ -1511,7 +1586,7 @@ function updateCats(deltaSeconds: number, frameAt: number) {
           }
         }
       }
-    } else if (owner && cat.behavior !== "stay") {
+    } else if (owner) {
       const dx = owner.x - cat.x;
       const dy = owner.y - cat.y;
       const distance = Math.hypot(dx, dy);
@@ -1880,6 +1955,7 @@ function subscribeToCats() {
       const seenIds = new Set<string>();
       if (!records) {
         catsById.clear();
+        updateCatDebugPanel();
         return;
       }
       for (const [id, record] of Object.entries(records)) {
@@ -1934,6 +2010,7 @@ function subscribeToCats() {
           catsById.delete(catId);
         }
       }
+      updateCatDebugPanel();
     },
     (error) => {
       setStatus(`Cats failed: ${error.message}`, "error");
@@ -2078,6 +2155,7 @@ async function applyCatAction(action: "follow" | "stay" | "letgo" | "pet") {
     next.state = "idle";
   }
   catsById.set(next.id, next);
+  updateCatDebugPanel();
   try {
     await set(catRef(next.id), {
       x: Math.round(next.x),
@@ -2951,6 +3029,7 @@ hitboxesToggle.addEventListener("click", () => {
   showHitboxes = !showHitboxes;
   hitboxesToggle.setAttribute("aria-pressed", String(showHitboxes));
   hitboxesToggle.textContent = showHitboxes ? "Hitboxes On" : "Hitboxes";
+  updateCatDebugPanel();
 });
 
 paintBodyInput.addEventListener("input", () => {
@@ -3044,6 +3123,22 @@ for (const button of catMenuButtons) {
     }
   });
 }
+
+catDebugDeleteButton.addEventListener("click", () => {
+  const count = Math.floor(Number(catDebugDeleteCount.value));
+  const safeCount = Number.isFinite(count) && count > 0 ? count : 1;
+  void deleteUntamedCats(safeCount).catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Delete untamed failed: ${message}`, "error");
+  });
+});
+
+catDebugDeleteCount.addEventListener("input", () => {
+  const value = Math.floor(Number(catDebugDeleteCount.value));
+  if (!Number.isFinite(value) || value < 1) {
+    catDebugDeleteCount.value = "1";
+  }
+});
 signInTab.addEventListener("click", () => {
   setAuthMode("signin");
 });
@@ -3146,6 +3241,7 @@ setPaintPanelOpen(false);
 updateBuildHotbarSelection();
 setBuildInventoryOpen(false);
 setCatMenuOpen(null);
+updateCatDebugPanel();
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
