@@ -515,11 +515,11 @@ const SOLID_BUILD_BLOCKS = new Set<BuildBlockType>(["woodWall", "stoneWall", "wi
 const CAT_FEED_RANGE = 170;
 const CAT_FOLLOW_RADIUS = 220;
 const CAT_COMFORT_RADIUS = 90;
-const CAT_BASE_SPEED = 120;
-const CAT_FOLLOW_SPEED = 235;
-const CAT_ZOOMIES_SPEED = 310;
-const CAT_ACCELERATION = 7.2;
-const CAT_DAMPING = 4.6;
+const CAT_BASE_SPEED = 220;
+const CAT_FOLLOW_SPEED = 320;
+const CAT_ZOOMIES_SPEED = 420;
+const CAT_ACCELERATION = 14;
+const CAT_DAMPING = 2.2;
 const CAT_ZOOMIES_CHECK_INTERVAL_MS = 10000;
 const CAT_ZOOMIES_CHANCE = 0.02;
 const CAT_ZOOMIES_MIN_MS = 4000;
@@ -1460,7 +1460,20 @@ async function syncOwnedCatsIndex() {
 }
 
 function updateCats(deltaSeconds: number, frameAt: number) {
+  if (!localPlayer && isFirebaseConfigured) {
+    return;
+  }
+
   for (const cat of catsById.values()) {
+    const authoritativeForCat =
+      !isFirebaseConfigured ||
+      !localPlayer ||
+      cat.ownerUid === localPlayer.id ||
+      (!cat.ownerUid && cat.createdBy === localPlayer.id);
+    if (!authoritativeForCat) {
+      continue;
+    }
+
     const owner = getOwnerPlayer(cat);
     const ownerOnline = Boolean(owner);
     const now = Date.now();
@@ -1504,35 +1517,37 @@ function updateCats(deltaSeconds: number, frameAt: number) {
         cat.state = "follow";
       } else if (distance < CAT_COMFORT_RADIUS) {
         if (cat.nextStateAt <= now) {
-          cat.nextStateAt = now + randomRange(650, 1500);
+          cat.nextStateAt = now + randomRange(350, 850);
           const angle = Math.random() * Math.PI * 2;
-          targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED * 0.48;
-          targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED * 0.48;
+          targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED * 0.9;
+          targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED * 0.9;
           cat.state = "wander";
-        } else {
-          targetVelocityX = 0;
-          targetVelocityY = 0;
-          cat.state = "idle";
+        } else if (cat.state === "wander") {
+          const speed = Math.hypot(cat.vx, cat.vy);
+          if (speed > 2) {
+            targetVelocityX = (cat.vx / speed) * CAT_BASE_SPEED * 0.85;
+            targetVelocityY = (cat.vy / speed) * CAT_BASE_SPEED * 0.85;
+          }
         }
       } else {
         const nx = dx / Math.max(distance, 1);
         const ny = dy / Math.max(distance, 1);
-        targetVelocityX = nx * (CAT_BASE_SPEED + 40);
-        targetVelocityY = ny * (CAT_BASE_SPEED + 40);
+        targetVelocityX = nx * CAT_FOLLOW_SPEED;
+        targetVelocityY = ny * CAT_FOLLOW_SPEED;
         cat.state = "wander";
       }
     } else {
       if (cat.nextStateAt <= now) {
-        cat.nextStateAt = now + randomRange(750, 2000);
+        cat.nextStateAt = now + randomRange(300, 900);
         const angle = Math.random() * Math.PI * 2;
-        targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED * 0.75;
-        targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED * 0.75;
+        targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED;
+        targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED;
         cat.state = "wander";
       } else if (cat.state === "wander") {
         const speed = Math.hypot(cat.vx, cat.vy);
         if (speed > 2) {
-          targetVelocityX = (cat.vx / speed) * CAT_BASE_SPEED * 0.7;
-          targetVelocityY = (cat.vy / speed) * CAT_BASE_SPEED * 0.7;
+          targetVelocityX = (cat.vx / speed) * CAT_BASE_SPEED * 0.95;
+          targetVelocityY = (cat.vy / speed) * CAT_BASE_SPEED * 0.95;
         }
       } else {
         cat.state = "idle";
