@@ -107,7 +107,7 @@ type CatRecord = {
   vx?: number;
   vy?: number;
   state?: CatState;
-  ownerUid?: string | null;
+  ownerUid?: string;
   ownerName?: string;
   createdBy?: string;
   hue?: number;
@@ -1318,7 +1318,7 @@ async function spawnCatForLocalPlayer() {
     vx: 0,
     vy: 0,
     state: "idle",
-    ownerUid: null,
+    ownerUid: "",
     ownerName: "",
     createdBy: localPlayer.id,
     hue: Math.floor(randomRange(10, 45)),
@@ -1784,7 +1784,7 @@ function subscribeToCats() {
           vx: record.vx ?? 0,
           vy: record.vy ?? 0,
           state: record.state ?? "idle",
-          ownerUid: record.ownerUid ?? null,
+          ownerUid: record.ownerUid && record.ownerUid.length > 0 ? record.ownerUid : null,
           ownerName: record.ownerName ?? "",
           createdBy: record.createdBy ?? "unknown",
           hue: clamp(record.hue ?? 24, 0, 360),

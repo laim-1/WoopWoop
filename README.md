@@ -62,7 +62,7 @@ For early local testing only, you can use permissive database rules:
         "cats": {
           "$catId": {
             ".write": "auth != null",
-            ".validate": "!newData.exists() || (newData.hasChildren(['x','y','vx','vy','state','ownerUid','ownerName','createdBy','hue','nextStateAt','zoomiesUntil','lastFedAt','updatedAt']) && newData.child('state').isString() && (newData.child('state').val() == 'idle' || newData.child('state').val() == 'wander' || newData.child('state').val() == 'follow' || newData.child('state').val() == 'zoomies') && newData.child('ownerName').isString() && newData.child('createdBy').isString())"
+            ".validate": "!newData.exists() || (newData.hasChildren(['x','y','vx','vy','state','ownerUid','ownerName','createdBy','hue','nextStateAt','zoomiesUntil','lastFedAt','updatedAt']) && newData.child('state').isString() && (newData.child('state').val() == 'idle' || newData.child('state').val() == 'wander' || newData.child('state').val() == 'follow' || newData.child('state').val() == 'zoomies') && newData.child('ownerUid').isString() && newData.child('ownerName').isString() && newData.child('createdBy').isString())"
           }
         }
       }
