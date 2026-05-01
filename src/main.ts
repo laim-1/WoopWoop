@@ -93,9 +93,11 @@ type CatEntity = {
   ownerUid: string | null;
   ownerName: string;
   createdBy: string;
+  behavior: "follow" | "stay";
   hue: number;
   nextStateAt: number;
   zoomiesUntil: number;
+  petUntil: number;
   lastFedAt: number;
   updatedAt?: number | object;
   createdAt?: number | object;
@@ -110,9 +112,11 @@ type CatRecord = {
   ownerUid?: string;
   ownerName?: string;
   createdBy?: string;
+  behavior?: "follow" | "stay";
   hue?: number;
   nextStateAt?: number;
   zoomiesUntil?: number;
+  petUntil?: number;
   lastFedAt?: number;
   updatedAt?: number | object;
   createdAt?: number | object;
@@ -307,6 +311,14 @@ app.innerHTML = `
       <span class="build-hotbar-hint">E toggle, LMB place, RMB remove</span>
     </section>
 
+    <section class="cat-menu is-hidden" id="cat-menu" aria-label="Cat actions">
+      <h2>Cat Menu</h2>
+      <button type="button" data-cat-action="follow">Follow</button>
+      <button type="button" data-cat-action="stay">Stay</button>
+      <button type="button" data-cat-action="letgo">Let Go</button>
+      <button type="button" data-cat-action="pet">Pet</button>
+    </section>
+
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
   </main>
 `;
@@ -350,6 +362,7 @@ const chatInputElement = document.querySelector<HTMLInputElement>("#chat-input")
 const chatDrawerElement = document.querySelector<HTMLElement>("#chat-drawer");
 const chatDrawerToggleElement = document.querySelector<HTMLButtonElement>("#chat-drawer-toggle");
 const buildHotbarElement = document.querySelector<HTMLElement>("#build-hotbar");
+const catMenuElement = document.querySelector<HTMLElement>("#cat-menu");
 
 if (
   !canvasElement ||
@@ -390,7 +403,8 @@ if (
   !chatInputElement ||
   !chatDrawerElement ||
   !chatDrawerToggleElement ||
-  !buildHotbarElement
+  !buildHotbarElement ||
+  !catMenuElement
 ) {
   throw new Error("Missing required game UI element");
 }
@@ -440,6 +454,7 @@ const chatInput = chatInputElement;
 const chatDrawer = chatDrawerElement;
 const chatDrawerToggle = chatDrawerToggleElement;
 const buildHotbar = buildHotbarElement;
+const catMenu = catMenuElement;
 const context = renderingContext;
 context.imageSmoothingEnabled = false;
 
@@ -500,14 +515,17 @@ const SOLID_BUILD_BLOCKS = new Set<BuildBlockType>(["woodWall", "stoneWall", "wi
 const CAT_FEED_RANGE = 170;
 const CAT_FOLLOW_RADIUS = 220;
 const CAT_COMFORT_RADIUS = 90;
-const CAT_BASE_SPEED = 84;
-const CAT_FOLLOW_SPEED = 112;
-const CAT_ZOOMIES_SPEED = 220;
+const CAT_BASE_SPEED = 120;
+const CAT_FOLLOW_SPEED = 235;
+const CAT_ZOOMIES_SPEED = 310;
+const CAT_ACCELERATION = 7.2;
+const CAT_DAMPING = 4.6;
 const CAT_ZOOMIES_CHECK_INTERVAL_MS = 10000;
 const CAT_ZOOMIES_CHANCE = 0.02;
 const CAT_ZOOMIES_MIN_MS = 4000;
 const CAT_ZOOMIES_MAX_MS = 7000;
 const MAX_CATS_PER_PLAYER = 8;
+const CAT_CLICK_RADIUS = 30;
 
 const keys = new Set<string>();
 const players = new Map<string, Player>();
@@ -561,6 +579,7 @@ let catsUnsubscribe: Unsubscribe | null = null;
 let ownedCatsUnsubscribe: Unsubscribe | null = null;
 let catSpawnComboLatched = false;
 let lastCatAiSyncAt = 0;
+let selectedCatMenuId: string | null = null;
 const localPlayerColors: PlayerColorPalette = {
   body: "#ffffff",
   hands: "#ffffff",
@@ -1132,6 +1151,7 @@ function updateOverlayPanels() {
   paintControls.classList.toggle("is-hidden", !hasJoinedLobby);
   hudResources.classList.toggle("is-hidden", !hasJoinedLobby);
   buildHotbar.classList.toggle("is-hidden", !hasJoinedLobby || !buildInventoryOpen);
+  catMenu.classList.toggle("is-hidden", !hasJoinedLobby || !selectedCatMenuId);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -1176,6 +1196,11 @@ function setBuildInventoryOpen(open: boolean) {
   } else {
     setBuildModeEnabled(false);
   }
+}
+
+function setCatMenuOpen(catId: string | null) {
+  selectedCatMenuId = catId;
+  catMenu.classList.toggle("is-hidden", !catId || !hasJoinedLobby);
 }
 
 function getHoveredBuildCellFromPointer(event: PointerEvent) {
@@ -1226,6 +1251,7 @@ async function placeSelectedBlockAtCell(gx: number, gy: number) {
   const type = selectedBuildType();
   if (!isFirebaseConfigured) {
     blocksByCell.set(cellId, { id: cellId, gx, gy, type, placedBy: localPlayer.id, placedAt: Date.now() });
+    cullResourcesInsideBlocks();
     return;
   }
   const previous = blocksByCell.get(cellId);
@@ -1236,6 +1262,7 @@ async function placeSelectedBlockAtCell(gx: number, gy: number) {
       placedBy: localPlayer.id,
       placedAt: serverTimestamp()
     } satisfies BlockRecord);
+    cullResourcesInsideBlocks();
   } catch (error) {
     if (previous) {
       blocksByCell.set(cellId, previous);
@@ -1321,9 +1348,11 @@ async function spawnCatForLocalPlayer() {
     ownerUid: "",
     ownerName: "",
     createdBy: localPlayer.id,
+    behavior: "follow",
     hue: Math.floor(randomRange(10, 45)),
     nextStateAt: now + randomRange(900, 2200),
     zoomiesUntil: 0,
+    petUntil: 0,
     lastFedAt: 0,
     updatedAt: serverTimestamp(),
     createdAt: serverTimestamp()
@@ -1345,6 +1374,30 @@ function findNearestCatToPlayer(range: number) {
     }
   }
   return nearest;
+}
+
+function findClickedCat(worldX: number, worldY: number) {
+  let hit: CatEntity | null = null;
+  let bestDistance = CAT_CLICK_RADIUS;
+  for (const cat of catsById.values()) {
+    const distance = Math.hypot(cat.x - worldX, cat.y - worldY);
+    if (distance <= bestDistance) {
+      hit = cat;
+      bestDistance = distance;
+    }
+  }
+  return hit;
+}
+
+function cullResourcesInsideBlocks() {
+  for (let i = resourceNodes.length - 1; i >= 0; i -= 1) {
+    const node = resourceNodes[i];
+    const gx = worldToGrid(node.x);
+    const gy = worldToGrid(node.y);
+    if (blocksByCell.has(cellIdFromGrid(gx, gy))) {
+      resourceNodes.splice(i, 1);
+    }
+  }
 }
 
 async function feedNearestCat() {
@@ -1369,6 +1422,7 @@ async function feedNearestCat() {
       ...cat,
       ownerUid: localPlayer.id,
       ownerName,
+      behavior: "follow",
       lastFedAt: now,
       state: "follow",
       updatedAt: serverTimestamp()
@@ -1417,51 +1471,78 @@ function updateCats(deltaSeconds: number, frameAt: number) {
       }
     }
 
+    let targetVelocityX = 0;
+    let targetVelocityY = 0;
+
     if (cat.state === "zoomies") {
       if (now >= cat.zoomiesUntil) {
         cat.state = ownerOnline ? "follow" : "idle";
         cat.zoomiesUntil = 0;
       } else {
-        const angle = Math.random() * Math.PI * 2;
-        cat.vx += Math.cos(angle) * CAT_ZOOMIES_SPEED * 0.6 * deltaSeconds;
-        cat.vy += Math.sin(angle) * CAT_ZOOMIES_SPEED * 0.6 * deltaSeconds;
+        if (cat.nextStateAt <= now) {
+          cat.nextStateAt = now + randomRange(140, 360);
+          const angle = Math.random() * Math.PI * 2;
+          targetVelocityX = Math.cos(angle) * CAT_ZOOMIES_SPEED;
+          targetVelocityY = Math.sin(angle) * CAT_ZOOMIES_SPEED;
+        } else {
+          const speed = Math.hypot(cat.vx, cat.vy);
+          if (speed > 2) {
+            targetVelocityX = (cat.vx / speed) * CAT_ZOOMIES_SPEED;
+            targetVelocityY = (cat.vy / speed) * CAT_ZOOMIES_SPEED;
+          }
+        }
       }
-    } else if (owner) {
+    } else if (owner && cat.behavior !== "stay") {
       const dx = owner.x - cat.x;
       const dy = owner.y - cat.y;
       const distance = Math.hypot(dx, dy);
       if (distance > CAT_FOLLOW_RADIUS) {
         const nx = dx / Math.max(distance, 1);
         const ny = dy / Math.max(distance, 1);
-        cat.vx += nx * CAT_FOLLOW_SPEED * deltaSeconds;
-        cat.vy += ny * CAT_FOLLOW_SPEED * deltaSeconds;
+        targetVelocityX = nx * CAT_FOLLOW_SPEED;
+        targetVelocityY = ny * CAT_FOLLOW_SPEED;
         cat.state = "follow";
       } else if (distance < CAT_COMFORT_RADIUS) {
         if (cat.nextStateAt <= now) {
-          cat.nextStateAt = now + randomRange(900, 2000);
+          cat.nextStateAt = now + randomRange(650, 1500);
           const angle = Math.random() * Math.PI * 2;
-          cat.vx += Math.cos(angle) * CAT_BASE_SPEED * 0.25;
-          cat.vy += Math.sin(angle) * CAT_BASE_SPEED * 0.25;
+          targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED * 0.48;
+          targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED * 0.48;
+          cat.state = "wander";
+        } else {
+          targetVelocityX = 0;
+          targetVelocityY = 0;
           cat.state = "idle";
         }
       } else {
         const nx = dx / Math.max(distance, 1);
         const ny = dy / Math.max(distance, 1);
-        cat.vx += nx * CAT_BASE_SPEED * deltaSeconds * 0.5;
-        cat.vy += ny * CAT_BASE_SPEED * deltaSeconds * 0.5;
+        targetVelocityX = nx * (CAT_BASE_SPEED + 40);
+        targetVelocityY = ny * (CAT_BASE_SPEED + 40);
         cat.state = "wander";
       }
     } else {
       if (cat.nextStateAt <= now) {
-        cat.nextStateAt = now + randomRange(1200, 2800);
+        cat.nextStateAt = now + randomRange(750, 2000);
         const angle = Math.random() * Math.PI * 2;
-        cat.vx += Math.cos(angle) * CAT_BASE_SPEED * 0.5;
-        cat.vy += Math.sin(angle) * CAT_BASE_SPEED * 0.5;
+        targetVelocityX = Math.cos(angle) * CAT_BASE_SPEED * 0.75;
+        targetVelocityY = Math.sin(angle) * CAT_BASE_SPEED * 0.75;
         cat.state = "wander";
+      } else if (cat.state === "wander") {
+        const speed = Math.hypot(cat.vx, cat.vy);
+        if (speed > 2) {
+          targetVelocityX = (cat.vx / speed) * CAT_BASE_SPEED * 0.7;
+          targetVelocityY = (cat.vy / speed) * CAT_BASE_SPEED * 0.7;
+        }
+      } else {
+        cat.state = "idle";
       }
     }
 
-    const damping = Math.exp(-3.8 * deltaSeconds);
+    const accelBlend = 1 - Math.exp(-CAT_ACCELERATION * deltaSeconds);
+    cat.vx += (targetVelocityX - cat.vx) * accelBlend;
+    cat.vy += (targetVelocityY - cat.vy) * accelBlend;
+    const damping = Math.exp(-CAT_DAMPING * deltaSeconds);
     cat.vx *= damping;
     cat.vy *= damping;
     const speed = Math.hypot(cat.vx, cat.vy);
@@ -1528,6 +1609,11 @@ function spawnResourceNode(
   for (let attempt = 0; attempt < tries; attempt += 1) {
     const x = clamp(xMin + rng() * Math.max(1, xMax - xMin), radius + 4, world.width - radius - 4);
     const y = clamp(yMin + rng() * Math.max(1, yMax - yMin), radius + 4, world.height - radius - 4);
+    const gx = worldToGrid(x);
+    const gy = worldToGrid(y);
+    if (blocksByCell.has(cellIdFromGrid(gx, gy))) {
+      continue;
+    }
     const heavyOverlap = resourceNodes.some((other) => {
       if (other.hp <= 0) {
         return false;
@@ -1756,6 +1842,7 @@ function subscribeToBlocks() {
           placedAt: record.placedAt
         });
       }
+      cullResourcesInsideBlocks();
     },
     (error) => {
       setStatus(`Blocks failed: ${error.message}`, "error");
@@ -1787,9 +1874,11 @@ function subscribeToCats() {
           ownerUid: record.ownerUid && record.ownerUid.length > 0 ? record.ownerUid : null,
           ownerName: record.ownerName ?? "",
           createdBy: record.createdBy ?? "unknown",
+          behavior: record.behavior === "stay" ? "stay" : "follow",
           hue: clamp(record.hue ?? 24, 0, 360),
           nextStateAt: record.nextStateAt ?? Date.now() + randomRange(800, 1600),
           zoomiesUntil: record.zoomiesUntil ?? 0,
+          petUntil: record.petUntil ?? 0,
           lastFedAt: record.lastFedAt ?? 0,
           updatedAt: record.updatedAt,
           createdAt: record.createdAt
@@ -1887,12 +1976,14 @@ async function syncLocalOwnedCats() {
         vx: cat.vx,
         vy: cat.vy,
         state: cat.state,
-        ownerUid: cat.ownerUid,
+        ownerUid: cat.ownerUid ?? "",
         ownerName: cat.ownerName,
         createdBy: cat.createdBy,
+        behavior: cat.behavior,
         hue: cat.hue,
         nextStateAt: Math.round(cat.nextStateAt),
         zoomiesUntil: Math.round(cat.zoomiesUntil),
+        petUntil: Math.round(cat.petUntil),
         lastFedAt: Math.round(cat.lastFedAt),
         updatedAt: serverTimestamp(),
         createdAt: cat.createdAt ?? serverTimestamp()
@@ -1900,6 +1991,71 @@ async function syncLocalOwnedCats() {
     );
   }
   await Promise.all(syncs);
+}
+
+async function applyCatAction(action: "follow" | "stay" | "letgo" | "pet") {
+  if (!localPlayer || !selectedCatMenuId) {
+    return;
+  }
+  const cat = catsById.get(selectedCatMenuId);
+  if (!cat) {
+    setCatMenuOpen(null);
+    return;
+  }
+  const ownedByLocal = cat.ownerUid === localPlayer.id;
+  if (!ownedByLocal && action !== "pet") {
+    setStatus("Feed the cat first to control it.", "error");
+    return;
+  }
+  const next = { ...cat };
+  if (action === "follow") {
+    next.ownerUid = localPlayer.id;
+    next.ownerName = localPlayer.name;
+    next.behavior = "follow";
+    next.state = "follow";
+  } else if (action === "stay") {
+    next.behavior = "stay";
+    next.state = "idle";
+    next.vx = 0;
+    next.vy = 0;
+  } else if (action === "letgo") {
+    next.ownerUid = null;
+    next.ownerName = "";
+    next.behavior = "follow";
+    next.state = "wander";
+  } else if (action === "pet") {
+    next.petUntil = Date.now() + 1400;
+    next.state = "idle";
+  }
+  catsById.set(next.id, next);
+  try {
+    await set(catRef(next.id), {
+      x: Math.round(next.x),
+      y: Math.round(next.y),
+      vx: next.vx,
+      vy: next.vy,
+      state: next.state,
+      ownerUid: next.ownerUid ?? "",
+      ownerName: next.ownerName,
+      createdBy: next.createdBy,
+      behavior: next.behavior,
+      hue: next.hue,
+      nextStateAt: Math.round(next.nextStateAt),
+      zoomiesUntil: Math.round(next.zoomiesUntil),
+      petUntil: Math.round(next.petUntil),
+      lastFedAt: Math.round(next.lastFedAt),
+      updatedAt: serverTimestamp(),
+      createdAt: next.createdAt ?? serverTimestamp()
+    } satisfies CatRecord);
+    if (action === "letgo") {
+      void remove(ref(database, `users/${localPlayer.id}/ownedCats/${next.id}`));
+    } else if (next.ownerUid === localPlayer.id) {
+      void set(ref(database, `users/${localPlayer.id}/ownedCats/${next.id}`), true);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Cat action failed: ${message}`, "error");
+  }
 }
 
 function updateLocalPlayer(deltaSeconds: number) {
@@ -2159,11 +2315,18 @@ function drawBuildPreview() {
 }
 
 function drawCats() {
+  const now = Date.now();
   for (const cat of catsById.values()) {
     const bodyRadius = 22;
     const earSize = 9;
     const hue = cat.hue % 360;
     const catColor = `hsl(${hue}deg 40% 62%)`;
+    const petActive = cat.petUntil > now;
+    const petScale = petActive ? 1 + Math.sin(now / 70) * 0.12 : 1;
+    context.save();
+    context.translate(cat.x, cat.y);
+    context.scale(petScale, petScale);
+    context.translate(-cat.x, -cat.y);
     context.fillStyle = catColor;
     context.beginPath();
     context.arc(cat.x, cat.y, bodyRadius, 0, Math.PI * 2);
@@ -2196,6 +2359,14 @@ function drawCats() {
       context.arc(cat.x, cat.y, bodyRadius + 6, 0, Math.PI * 2);
       context.stroke();
     }
+    if (petActive) {
+      context.fillStyle = "rgba(255, 140, 170, 0.95)";
+      context.beginPath();
+      context.arc(cat.x - 14, cat.y - 32, 4, 0, Math.PI * 2);
+      context.arc(cat.x + 14, cat.y - 32, 4, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
   }
 }
 
@@ -2540,6 +2711,7 @@ function subscribeToKickedPlayers() {
         hasJoinedLobby = false;
         keys.clear();
         setBuildInventoryOpen(false);
+        setCatMenuOpen(null);
         void remove(playerRef(kickedPlayer.id));
         setStatus("You were kicked from the lobby.", "error");
       }
@@ -2613,6 +2785,7 @@ async function joinLobby(playerName: string) {
     renderedPlayers.set(localPlayer.id, localPlayer);
     hasJoinedLobby = true;
     setBuildInventoryOpen(false);
+    setCatMenuOpen(null);
     blocksByCell.clear();
     catsById.clear();
     localOwnedCatIds.clear();
@@ -2649,6 +2822,7 @@ async function joinLobby(playerName: string) {
   renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
   setBuildInventoryOpen(false);
+  setCatMenuOpen(null);
   blocksByCell.clear();
   generateResourceNodes();
   updateResourcePanel();
@@ -2763,6 +2937,21 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  const camera = getCameraCenter();
+  const worldX = screenToWorldX(camera.x, event.clientX);
+  const worldY = screenToWorldY(camera.y, event.clientY);
+  const clickedCat = findClickedCat(worldX, worldY);
+  if (clickedCat) {
+    if (localPlayer && clickedCat.ownerUid === localPlayer.id) {
+      setCatMenuOpen(clickedCat.id);
+    } else {
+      setCatMenuOpen(null);
+    }
+    event.preventDefault();
+    return;
+  }
+  setCatMenuOpen(null);
+
   triggerPunch();
   event.preventDefault();
 });
@@ -2793,6 +2982,16 @@ for (const button of buildHotbarButtons) {
     selectedBuildSlot = clamp(slot, 0, BUILD_BLOCK_TYPES.length - 1);
     updateBuildHotbarSelection();
     setBuildInventoryOpen(true);
+  });
+}
+
+const catMenuButtons = catMenu.querySelectorAll<HTMLButtonElement>("[data-cat-action]");
+for (const button of catMenuButtons) {
+  button.addEventListener("click", () => {
+    const action = button.dataset.catAction;
+    if (action === "follow" || action === "stay" || action === "letgo" || action === "pet") {
+      void applyCatAction(action);
+    }
   });
 }
 signInTab.addEventListener("click", () => {
@@ -2896,6 +3095,7 @@ setChatDrawerOpen(false);
 setPaintPanelOpen(false);
 updateBuildHotbarSelection();
 setBuildInventoryOpen(false);
+setCatMenuOpen(null);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
