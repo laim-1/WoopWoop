@@ -18,11 +18,20 @@ type Player = {
   area: Area;
   characterId: CharacterId;
   name: string;
+  paintColors: PlayerColorPalette;
   lastSeen?: number | object;
 };
 
 type PlayerRecord = Omit<Player, "id">;
 type PlayerSnapshot = Partial<PlayerRecord>;
+
+type PlayerPaintProfileRecord = {
+  paintColors?: {
+    body?: string;
+    hands?: string;
+    feet?: string;
+  };
+};
 
 type KickedRecord = {
   kickedAt?: number | object;
@@ -1058,6 +1067,30 @@ function normalizeCharacterId(characterId: PlayerSnapshot["characterId"]): Chara
     : DEFAULT_CHARACTER_ID;
 }
 
+function normalizeColorHex(value: unknown, fallback: string) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
+}
+
+function normalizePaintColors(value: unknown): PlayerColorPalette {
+  const defaultColors: PlayerColorPalette = {
+    body: "#ffffff",
+    hands: "#ffffff",
+    feet: "#ffffff"
+  };
+  if (!value || typeof value !== "object") {
+    return defaultColors;
+  }
+  const paint = value as Record<string, unknown>;
+  return {
+    body: normalizeColorHex(paint.body, defaultColors.body),
+    hands: normalizeColorHex(paint.hands, defaultColors.hands),
+    feet: normalizeColorHex(paint.feet, defaultColors.feet)
+  };
+}
+
 function currentArea(): Area {
   return localPlayer?.area ?? FOREST_AREA;
 }
@@ -1075,7 +1108,8 @@ function makePlayer(userId: string, name: string): Player {
     moving: false,
     step: 0,
     characterId: selectedCharacterId,
-    name
+    name,
+    paintColors: { ...localPlayerColors }
   };
 }
 
@@ -1101,6 +1135,10 @@ function blocksRef() {
 
 function blockRef(cellId: string) {
   return ref(database, `rooms/lobby/blocks/${cellId}`);
+}
+
+function userPaintProfileRef(userId: string) {
+  return ref(database, `users/${userId}/profile/paintColors`);
 }
 
 function catsRef() {
@@ -1186,6 +1224,43 @@ function setPaintPanelOpen(open: boolean) {
   paintPanelOpen = open;
   paintControlsPanel.classList.toggle("is-hidden", !open);
   paintControlsToggle.setAttribute("aria-expanded", String(open));
+}
+
+function applyLocalPaintColors(colors: PlayerColorPalette) {
+  localPlayerColors.body = colors.body;
+  localPlayerColors.hands = colors.hands;
+  localPlayerColors.feet = colors.feet;
+  paintBodyInput.value = colors.body;
+  paintHandsInput.value = colors.hands;
+  paintFeetInput.value = colors.feet;
+  if (localPlayer) {
+    localPlayer.paintColors = { ...colors };
+  }
+}
+
+async function loadLocalPaintColors(userId: string) {
+  if (!isFirebaseConfigured) {
+    return;
+  }
+  try {
+    const snapshot = await get(userPaintProfileRef(userId));
+    const profile = snapshot.val() as PlayerPaintProfileRecord | null;
+    const colors = normalizePaintColors(profile?.paintColors);
+    applyLocalPaintColors(colors);
+  } catch {
+    // Best effort: keep defaults if profile lookup fails.
+  }
+}
+
+async function persistLocalPaintColors() {
+  if (!localPlayer) {
+    return;
+  }
+  localPlayer.paintColors = { ...localPlayerColors };
+  if (!isFirebaseConfigured) {
+    return;
+  }
+  await set(userPaintProfileRef(localPlayer.id), { ...localPlayerColors });
 }
 
 function selectedBuildType() {
@@ -2081,6 +2156,7 @@ async function syncLocalPlayer() {
     moving: localPlayer.moving,
     step: localPlayer.step,
     name: localPlayer.name,
+    paintColors: localPlayer.paintColors,
     lastSeen: serverTimestamp()
   };
 
@@ -2605,9 +2681,7 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.fill();
 
   // Draw feet first so the body overlaps them.
-  const palette = isLocal
-    ? localPlayerColors
-    : { body: "#f2f2f2", hands: "#f2f2f2", feet: "#f2f2f2" };
+  const palette = player.paintColors ?? { body: "#f2f2f2", hands: "#f2f2f2", feet: "#f2f2f2" };
   context.fillStyle = palette.feet;
   context.beginPath();
   context.arc(
@@ -2796,7 +2870,8 @@ function subscribeToLobby() {
             moving: player.moving ?? false,
             step: player.step ?? 0,
             characterId: normalizeCharacterId(player.characterId),
-            name: player.name ?? `Player ${id.slice(0, 5)}`
+            name: player.name ?? `Player ${id.slice(0, 5)}`,
+            paintColors: normalizePaintColors(player.paintColors)
           });
         }
       }
@@ -2941,6 +3016,8 @@ async function joinLobby(playerName: string) {
     throw new Error("This browser was kicked from the lobby. Clear the kicked marker in devtools to rejoin.");
   }
 
+  await loadLocalPaintColors(playerId);
+
   localPlayer = makePlayer(playerId, playerName);
   localVelocityX = 0;
   localVelocityY = 0;
@@ -3034,14 +3111,35 @@ hitboxesToggle.addEventListener("click", () => {
 
 paintBodyInput.addEventListener("input", () => {
   localPlayerColors.body = paintBodyInput.value;
+  if (localPlayer) {
+    localPlayer.paintColors.body = localPlayerColors.body;
+  }
+  void persistLocalPaintColors().catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Paint save failed: ${message}`, "error");
+  });
 });
 
 paintHandsInput.addEventListener("input", () => {
   localPlayerColors.hands = paintHandsInput.value;
+  if (localPlayer) {
+    localPlayer.paintColors.hands = localPlayerColors.hands;
+  }
+  void persistLocalPaintColors().catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Paint save failed: ${message}`, "error");
+  });
 });
 
 paintFeetInput.addEventListener("input", () => {
   localPlayerColors.feet = paintFeetInput.value;
+  if (localPlayer) {
+    localPlayer.paintColors.feet = localPlayerColors.feet;
+  }
+  void persistLocalPaintColors().catch((error) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Paint save failed: ${message}`, "error");
+  });
 });
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -3238,6 +3336,7 @@ createForm.addEventListener("submit", (event) => {
 setAuthMode("signin");
 setChatDrawerOpen(false);
 setPaintPanelOpen(false);
+applyLocalPaintColors(localPlayerColors);
 updateBuildHotbarSelection();
 setBuildInventoryOpen(false);
 setCatMenuOpen(null);

@@ -429,13 +429,19 @@ body {
 }
 
 .paint-controls-panel {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: grid;
   gap: 0.4rem;
-  padding: 0.55rem 0.65rem;
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 0.75rem 0.85rem;
   border: 1px solid rgba(196, 171, 119, 0.24);
   border-radius: 0.75rem;
-  background: rgba(38, 50, 31, 0.88);
+  background: rgba(38, 50, 31, 0.94);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+  z-index: 60;
 }
 
 .paint-controls-panel label {

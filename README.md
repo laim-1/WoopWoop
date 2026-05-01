@@ -70,6 +70,12 @@ For early local testing only, you can use permissive database rules:
     "users": {
       "$uid": {
         ".read": "auth != null && auth.uid == $uid",
+        "profile": {
+          "paintColors": {
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "!newData.exists() || (newData.hasChildren(['body','hands','feet']) && newData.child('body').isString() && newData.child('hands').isString() && newData.child('feet').isString())"
+          }
+        },
         "ownedCats": {
           "$catId": {
             ".write": "auth != null && auth.uid == $uid",
