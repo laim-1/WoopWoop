@@ -261,12 +261,13 @@ app.innerHTML = `
     </section>
 
     <section class="build-hotbar is-hidden" id="build-hotbar" aria-label="Build tools">
+      <h2>Build Inventory</h2>
       <button type="button" data-build-slot="0">1 Wood Wall</button>
       <button type="button" data-build-slot="1">2 Stone Wall</button>
       <button type="button" data-build-slot="2">3 Wood Floor</button>
       <button type="button" data-build-slot="3">4 Stone Floor</button>
       <button type="button" data-build-slot="4">5 Window</button>
-      <span class="build-hotbar-hint">B toggle, LMB place, RMB remove</span>
+      <span class="build-hotbar-hint">E toggle, LMB place, RMB remove</span>
     </section>
 
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="2D multiplayer game canvas"></canvas>
@@ -483,6 +484,7 @@ let hasJoinedLobby = false;
 let spawnPointIndex = 0;
 let chatDrawerOpen = false;
 let buildModeEnabled = false;
+let buildInventoryOpen = false;
 let selectedBuildSlot = 0;
 let hoveredBuildCell: { gx: number; gy: number } | null = null;
 let lastBuildActionAt = 0;
@@ -593,14 +595,14 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Enter" && hasJoinedLobby) {
     chatInput.focus();
     event.preventDefault();
-  } else if (event.code === "KeyB" && hasJoinedLobby) {
-    setBuildModeEnabled(!buildModeEnabled);
+  } else if (event.code === "KeyE" && hasJoinedLobby) {
+    setBuildInventoryOpen(!buildInventoryOpen);
     event.preventDefault();
   } else if (["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].includes(event.code)) {
     selectedBuildSlot = clamp(Number(event.code.replace("Digit", "")) - 1, 0, BUILD_BLOCK_TYPES.length - 1);
     updateBuildHotbarSelection();
     event.preventDefault();
-  } else if (event.code === "KeyE" || event.code === "Space") {
+  } else if (event.code === "Space") {
     if (buildModeEnabled) {
       event.preventDefault();
       return;
@@ -1047,7 +1049,7 @@ function updateOverlayPanels() {
   resourcePanel.classList.toggle("is-hidden", !hasJoinedLobby);
   paintControls.classList.toggle("is-hidden", !hasJoinedLobby);
   hudResources.classList.toggle("is-hidden", !hasJoinedLobby);
-  buildHotbar.classList.toggle("is-hidden", !hasJoinedLobby);
+  buildHotbar.classList.toggle("is-hidden", !hasJoinedLobby || !buildInventoryOpen);
 }
 
 function setChatDrawerOpen(open: boolean) {
@@ -1082,6 +1084,15 @@ function setBuildModeEnabled(enabled: boolean) {
   buildHotbar.classList.toggle("is-build-mode", buildModeEnabled);
   if (!buildModeEnabled) {
     hoveredBuildCell = null;
+  }
+}
+
+function setBuildInventoryOpen(open: boolean) {
+  buildInventoryOpen = open && hasJoinedLobby;
+  if (buildInventoryOpen) {
+    setBuildModeEnabled(true);
+  } else {
+    setBuildModeEnabled(false);
   }
 }
 
@@ -1135,11 +1146,23 @@ async function placeSelectedBlockAtCell(gx: number, gy: number) {
     blocksByCell.set(cellId, { id: cellId, gx, gy, type, placedBy: localPlayer.id, placedAt: Date.now() });
     return;
   }
-  await set(blockRef(cellId), {
-    type,
-    placedBy: localPlayer.id,
-    placedAt: serverTimestamp()
-  } satisfies BlockRecord);
+  const previous = blocksByCell.get(cellId);
+  blocksByCell.set(cellId, { id: cellId, gx, gy, type, placedBy: localPlayer.id, placedAt: Date.now() });
+  try {
+    await set(blockRef(cellId), {
+      type,
+      placedBy: localPlayer.id,
+      placedAt: serverTimestamp()
+    } satisfies BlockRecord);
+  } catch (error) {
+    if (previous) {
+      blocksByCell.set(cellId, previous);
+    } else {
+      blocksByCell.delete(cellId);
+    }
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Build place failed: ${message}`, "error");
+  }
 }
 
 async function removeBlockAtCell(gx: number, gy: number) {
@@ -1156,7 +1179,17 @@ async function removeBlockAtCell(gx: number, gy: number) {
     blocksByCell.delete(cellId);
     return;
   }
-  await remove(blockRef(cellId));
+  const previous = blocksByCell.get(cellId);
+  blocksByCell.delete(cellId);
+  try {
+    await remove(blockRef(cellId));
+  } catch (error) {
+    if (previous) {
+      blocksByCell.set(cellId, previous);
+    }
+    const message = error instanceof Error ? error.message : "Unknown error";
+    setStatus(`Build remove failed: ${message}`, "error");
+  }
 }
 
 function updateResourcePanel() {
@@ -2069,7 +2102,7 @@ function subscribeToKickedPlayers() {
         localPlayer = null;
         hasJoinedLobby = false;
         keys.clear();
-        setBuildModeEnabled(false);
+        setBuildInventoryOpen(false);
         void remove(playerRef(kickedPlayer.id));
         setStatus("You were kicked from the lobby.", "error");
       }
@@ -2142,6 +2175,7 @@ async function joinLobby(playerName: string) {
     players.set(localPlayer.id, localPlayer);
     renderedPlayers.set(localPlayer.id, localPlayer);
     hasJoinedLobby = true;
+    setBuildInventoryOpen(false);
     blocksByCell.clear();
     generateResourceNodes();
     updateResourcePanel();
@@ -2175,6 +2209,7 @@ async function joinLobby(playerName: string) {
   players.set(localPlayer.id, localPlayer);
   renderedPlayers.set(localPlayer.id, localPlayer);
   hasJoinedLobby = true;
+  setBuildInventoryOpen(false);
   blocksByCell.clear();
   generateResourceNodes();
   updateResourcePanel();
@@ -2316,7 +2351,7 @@ for (const button of buildHotbarButtons) {
     const slot = Number(button.dataset.buildSlot ?? "0");
     selectedBuildSlot = clamp(slot, 0, BUILD_BLOCK_TYPES.length - 1);
     updateBuildHotbarSelection();
-    setBuildModeEnabled(true);
+    setBuildInventoryOpen(true);
   });
 }
 signInTab.addEventListener("click", () => {
@@ -2419,7 +2454,7 @@ setAuthMode("signin");
 setChatDrawerOpen(false);
 setPaintPanelOpen(false);
 updateBuildHotbarSelection();
-setBuildModeEnabled(false);
+setBuildInventoryOpen(false);
 
 if (!isFirebaseConfigured) {
   setStatus("Firebase not configured. Add .env.local to enable online lobby.", "offline");
