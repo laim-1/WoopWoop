@@ -1312,6 +1312,16 @@ function getOwnerPlayer(cat: CatEntity) {
   return players.get(cat.ownerUid) ?? null;
 }
 
+function isCatAuthoritativeForLocal(ownerUid: string | null, createdBy: string) {
+  if (!isFirebaseConfigured) {
+    return true;
+  }
+  if (!localPlayer) {
+    return false;
+  }
+  return ownerUid === localPlayer.id || (!ownerUid && createdBy === localPlayer.id);
+}
+
 function countLocalOwnedCats() {
   if (!localPlayer) {
     return 0;
@@ -1465,11 +1475,7 @@ function updateCats(deltaSeconds: number, frameAt: number) {
   }
 
   for (const cat of catsById.values()) {
-    const authoritativeForCat =
-      !isFirebaseConfigured ||
-      !localPlayer ||
-      cat.ownerUid === localPlayer.id ||
-      (!cat.ownerUid && cat.createdBy === localPlayer.id);
+    const authoritativeForCat = isCatAuthoritativeForLocal(cat.ownerUid, cat.createdBy);
     if (!authoritativeForCat) {
       continue;
     }
@@ -1871,24 +1877,29 @@ function subscribeToCats() {
     catsRef(),
     (snapshot) => {
       const records = snapshot.val() as Record<string, CatRecord> | null;
-      catsById.clear();
+      const seenIds = new Set<string>();
       if (!records) {
+        catsById.clear();
         return;
       }
       for (const [id, record] of Object.entries(records)) {
         if (!record) {
           continue;
         }
-        catsById.set(id, {
+        const remoteOwnerUid = record.ownerUid && record.ownerUid.length > 0 ? record.ownerUid : null;
+        const remoteCreatedBy = record.createdBy ?? "unknown";
+        const authoritativeForCat = isCatAuthoritativeForLocal(remoteOwnerUid, remoteCreatedBy);
+        const existing = catsById.get(id);
+        const remoteCat: CatEntity = {
           id,
           x: clamp(record.x ?? world.width / 2, 20, world.width - 20),
           y: clamp(record.y ?? world.height / 2, 20, world.height - 20),
           vx: record.vx ?? 0,
           vy: record.vy ?? 0,
           state: record.state ?? "idle",
-          ownerUid: record.ownerUid && record.ownerUid.length > 0 ? record.ownerUid : null,
+          ownerUid: remoteOwnerUid,
           ownerName: record.ownerName ?? "",
-          createdBy: record.createdBy ?? "unknown",
+          createdBy: remoteCreatedBy,
           behavior: record.behavior === "stay" ? "stay" : "follow",
           hue: clamp(record.hue ?? 24, 0, 360),
           nextStateAt: record.nextStateAt ?? Date.now() + randomRange(800, 1600),
@@ -1897,7 +1908,31 @@ function subscribeToCats() {
           lastFedAt: record.lastFedAt ?? 0,
           updatedAt: record.updatedAt,
           createdAt: record.createdAt
-        });
+        };
+
+        if (existing && authoritativeForCat) {
+          // Keep locally simulated motion for authoritative cats to avoid
+          // jitter from echoed/stale remote snapshots fighting the client sim.
+          catsById.set(id, {
+            ...existing,
+            ownerUid: remoteCat.ownerUid,
+            ownerName: remoteCat.ownerName,
+            behavior: remoteCat.behavior,
+            hue: remoteCat.hue,
+            lastFedAt: remoteCat.lastFedAt,
+            updatedAt: remoteCat.updatedAt,
+            createdAt: remoteCat.createdAt
+          });
+        } else {
+          catsById.set(id, remoteCat);
+        }
+        seenIds.add(id);
+      }
+
+      for (const catId of [...catsById.keys()]) {
+        if (!seenIds.has(catId)) {
+          catsById.delete(catId);
+        }
       }
     },
     (error) => {
