@@ -405,6 +405,10 @@ function setStatus(message: string, state: "online" | "offline" | "error") {
   statusEl.dataset.state = state;
 }
 
+function logBackgroundFailure(label: string, error: unknown) {
+  console.warn(label, error);
+}
+
 function setAuthMode(mode: "signin" | "create") {
   const signInMode = mode === "signin";
   signInForm.classList.toggle("is-hidden", !signInMode);
@@ -671,7 +675,7 @@ function clearLocalQueues() {
   queueEnteredAt = 0;
   if (previousMode) {
     void leaveQueue(previousMode).catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
   }
 }
@@ -679,7 +683,7 @@ function clearLocalQueues() {
 function scheduleQueueCleanup(mode: QueueMode, delayMs = 0) {
   window.setTimeout(() => {
     void leaveQueue(mode).catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
   }, delayMs);
 }
@@ -950,13 +954,13 @@ async function joinLobby(playerName: string) {
       setStatus(`Initial sync failed: ${error.message}`, "error");
     });
     onDisconnect(playerRef(localPlayer.id)).remove().catch((error) => {
-      setStatus(`Disconnect cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Disconnect cleanup failed", error);
     });
     onDisconnect(queueEntryRef("single", localPlayer.id)).remove().catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
     onDisconnect(queueEntryRef("duo", localPlayer.id)).remove().catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
     subscribeToPlayers();
     subscribeToQueue("single");
