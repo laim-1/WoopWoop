@@ -314,6 +314,28 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function drawRoundedRectPath(x: number, y: number, width: number, height: number, radius: number) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+}
+
+function startAnimationLoop() {
+  if (animationStarted) {
+    return;
+  }
+  animationStarted = true;
+  lastFrameAt = performance.now();
+  requestAnimationFrame(tick);
+}
+
 function activeWorld() {
   return localPlayer?.scene === "towerDefense" ? towerDefenseWorld : lobbyWorld;
 }
@@ -917,20 +939,24 @@ async function joinLobby(playerName: string) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(isFirebaseConfigured ? "In lobby" : "Offline lobby", isFirebaseConfigured ? "online" : "offline");
+  startAnimationLoop();
 
   if (isFirebaseConfigured) {
-    await syncLocalPlayer();
-    await onDisconnect(playerRef(localPlayer.id)).remove();
-    await onDisconnect(queueEntryRef("single", localPlayer.id)).remove();
-    await onDisconnect(queueEntryRef("duo", localPlayer.id)).remove();
+    void syncLocalPlayer().catch((error) => {
+      setStatus(`Initial sync failed: ${error.message}`, "error");
+    });
+    onDisconnect(playerRef(localPlayer.id)).remove().catch((error) => {
+      setStatus(`Disconnect cleanup failed: ${error.message}`, "error");
+    });
+    onDisconnect(queueEntryRef("single", localPlayer.id)).remove().catch((error) => {
+      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+    });
+    onDisconnect(queueEntryRef("duo", localPlayer.id)).remove().catch((error) => {
+      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+    });
     subscribeToPlayers();
     subscribeToQueue("single");
     subscribeToQueue("duo");
-  }
-
-  if (!animationStarted) {
-    animationStarted = true;
-    requestAnimationFrame(tick);
   }
 }
 
@@ -969,7 +995,7 @@ function drawLobby(camera: { x: number; y: number }) {
     context.strokeStyle = isActive ? "#ffffff" : "rgba(255, 255, 255, 0.65)";
     context.lineWidth = isActive ? 8 : 4;
     context.beginPath();
-    context.roundRect(pad.x, pad.y, pad.width, pad.height, 28);
+    drawRoundedRectPath(pad.x, pad.y, pad.width, pad.height, 28);
     context.fill();
     context.stroke();
 
@@ -1041,7 +1067,7 @@ function drawTowerDefensePlaceholder() {
 
   context.fillStyle = "#d85757";
   context.beginPath();
-  context.roundRect(1520, 820, 180, 180, 24);
+  drawRoundedRectPath(1520, 820, 180, 180, 24);
   context.fill();
 
   context.fillStyle = "#f2ead8";
