@@ -1,0 +1,48 @@
+{
+  "rules": {
+    "rooms": {
+      "lobby": {
+        "players": {
+          "$playerId": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid === $playerId"
+          }
+        },
+        "queues": {
+          "$mode": {
+            "$playerId": {
+              ".read": "auth != null",
+              ".write": "auth != null && auth.uid === $playerId"
+            }
+          }
+        }
+      },
+      "matches": {
+        "$matchId": {
+          ".read": "auth != null",
+          "meta": {
+            ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid)"
+          },
+          "state": {
+            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+          },
+          "playerState": {
+            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+          },
+          "events": {
+            "$eventId": {
+              ".write": "auth != null && newData.child('playerId').val() === auth.uid",
+              ".validate": "newData.hasChildren(['id', 'playerId', 'type', 'at', 'payload'])"
+            }
+          },
+          "presence": {
+            "$playerId": {
+              ".write": "auth != null && auth.uid === $playerId"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
