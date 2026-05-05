@@ -216,6 +216,9 @@ const CAMERA_ZOOM = 1.1;
 const CAMERA_FOLLOW_SPEED = 10;
 const SINGLE_PLAYER_START_DELAY_MS = 850;
 const PLAYER_RADIUS = 28;
+const HAND_OFFSET_SIDE = 26;
+const HAND_OFFSET_BACK = -2;
+const HAND_RADIUS = 7;
 
 const lobbyWorld = {
   width: 2400,
@@ -277,6 +280,8 @@ let towerDefensePlayerState: Record<string, MatchPlayerState> = {};
 let selectedTowerType: TowerType = "dart";
 let matchSync: ReturnType<typeof createMatchSync> | null = null;
 let currentMatchPlayerIds: string[] = [];
+/** True when WASD is held; used so limb animation stops immediately on key release (not when velocity decays). */
+let localMovementInput = false;
 
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
@@ -559,11 +564,17 @@ function updateLocalPlayer(deltaSeconds: number) {
 
   const movementSpeed = Math.hypot(localVelocityX, localVelocityY);
   localPlayer.moving = movementSpeed > 2;
+  localMovementInput = hasInput;
 
-  if (localPlayer.moving) {
+  if (hasInput) {
+    const inputLen = Math.hypot(dx, dy);
+    localPlayer.facingX = dx / inputLen;
+    localPlayer.facingY = dy / inputLen;
+    localPlayer.step += deltaSeconds * (sprinting ? 9.5 : 6.5);
+  } else if (movementSpeed > 2) {
+    localPlayer.step = 0;
     localPlayer.facingX = localVelocityX / movementSpeed;
     localPlayer.facingY = localVelocityY / movementSpeed;
-    localPlayer.step += deltaSeconds * (sprinting ? 9.5 : 6.5);
   } else {
     localVelocityX = 0;
     localVelocityY = 0;
@@ -1314,6 +1325,7 @@ async function joinLobby(playerName: string) {
   localPlayer = makePlayer(playerId, playerName);
   localVelocityX = 0;
   localVelocityY = 0;
+  localMovementInput = false;
   cameraX = localPlayer.x;
   cameraY = localPlayer.y;
   hasJoinedLobby = true;
@@ -1626,8 +1638,12 @@ function drawPlayer(player: Player, isLocal: boolean) {
   const facingY = player.facingY / facingLength;
   const sideX = -facingY;
   const sideY = facingX;
-  const footSwing = player.moving ? Math.sin(player.step * 5.2) : 0;
+  const walkAnimating = isLocal ? localMovementInput : player.moving;
+  const limbPhase = player.step * 5.2;
+  const footSwing = walkAnimating ? Math.sin(limbPhase) : 0;
+  const handSwing = walkAnimating ? Math.sin(limbPhase + Math.PI) * 0.55 : 0;
   const bodyColor = isLocal ? "#f7f4e8" : "#9dc6ff";
+  const handColor = isLocal ? "#e2ddd0" : "#7eb0e8";
   const outlineColor = "#1f2430";
 
   context.fillStyle = "rgba(0, 0, 0, 0.24)";
@@ -1656,6 +1672,22 @@ function drawPlayer(player: Player, isLocal: boolean) {
   context.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
   context.fill();
   context.stroke();
+
+  context.fillStyle = handColor;
+  context.strokeStyle = outlineColor;
+  context.lineWidth = 3;
+  for (const side of [-1, 1]) {
+    context.beginPath();
+    context.arc(
+      player.x + sideX * side * HAND_OFFSET_SIDE + facingX * (HAND_OFFSET_BACK + handSwing * side * 6),
+      player.y + sideY * side * HAND_OFFSET_SIDE + facingY * (HAND_OFFSET_BACK + handSwing * side * 6) - 6,
+      HAND_RADIUS,
+      0,
+      Math.PI * 2
+    );
+    context.fill();
+    context.stroke();
+  }
 
   context.fillStyle = "#111827";
   context.beginPath();
