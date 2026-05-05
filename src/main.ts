@@ -219,11 +219,13 @@ const playerCount = requireElement<HTMLParagraphElement>("#player-count");
 const queueStatus = requireElement<HTMLParagraphElement>("#queue-status");
 const queueList = requireElement<HTMLUListElement>("#queue-list");
 
-const context = canvas.getContext("2d");
+const maybeContext = canvas.getContext("2d");
 
-if (!context) {
+if (!maybeContext) {
   throw new Error("Could not initialize 2D canvas context");
 }
+
+const context = maybeContext;
 
 const OFFLINE_PLAYER_ID = "offline-local-player";
 const DEFAULT_FACING = { x: 0, y: 1 };
@@ -506,10 +508,11 @@ function containsPoint(pad: QueuePad, x: number, y: number) {
 }
 
 function localQueuePad() {
-  if (!localPlayer || localPlayer.scene !== "lobby") {
+  const player = localPlayer;
+  if (!player || player.scene !== "lobby") {
     return null;
   }
-  return queuePads.find((pad) => containsPoint(pad, localPlayer.x, localPlayer.y)) ?? null;
+  return queuePads.find((pad) => containsPoint(pad, player.x, player.y)) ?? null;
 }
 
 function updateLocalPlayer(deltaSeconds: number) {
