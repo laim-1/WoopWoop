@@ -235,11 +235,10 @@ const TOWER_SHOP_SCREEN_PAD = 12;
 const TOWER_SHOP_INNER_PAD = 14;
 const TOWER_SHOP_TITLE_HEIGHT = 22;
 const TOWER_SHOP_CORNER_RADIUS = 12;
-const START_WAVE_BTN_X = 18;
-/** Below the HTML `.hud` overlay (title + status) so it stays clickable and clear. */
-const START_WAVE_BTN_Y = 132;
-const START_WAVE_BTN_W = 168;
-const START_WAVE_BTN_H = 44;
+const START_WAVE_BTN_W = 220;
+const START_WAVE_BTN_H = 46;
+/** Top-middle button: inset from viewport top (clears `.hud` on the left). */
+const START_WAVE_BTN_TOP = 92;
 
 const queuePads: QueuePad[] = [
   {
@@ -779,7 +778,7 @@ function resetTowerDefenseGame() {
   towerDefensePlayerState = {};
 }
 
-/** RTDB payloads may omit new fields — keep sim numbers finite so waves always run after Start. */
+/** RTDB can return partial or bad numbers — normalize so spawning/timers stay valid. */
 function coerceMatchStateFromRemote(raw: MatchState): MatchState {
   const base = createInitialMatchState(typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now());
   const m: MatchState = { ...base, ...raw };
@@ -806,8 +805,8 @@ function coerceMatchStateFromRemote(raw: MatchState): MatchState {
 
 function startWaveButtonLayout() {
   return {
-    x: START_WAVE_BTN_X,
-    y: START_WAVE_BTN_Y,
+    x: Math.floor(window.innerWidth / 2 - START_WAVE_BTN_W / 2),
+    y: START_WAVE_BTN_TOP,
     w: START_WAVE_BTN_W,
     h: START_WAVE_BTN_H,
   };
@@ -1281,8 +1280,8 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(
-    mode === "single" ? "Press Start wave to begin spawning." : "Press Start wave when your team is ready.",
-    isFirebaseConfigured ? "online" : "offline"
+    "Press Start wave (top middle) when ready — then build from the Tower shop.",
+    isFirebaseConfigured ? "online" : "offline",
   );
 
   if (isFirebaseConfigured) {
@@ -1639,7 +1638,7 @@ function drawTowerDefenseHud() {
     context.strokeStyle = "#bbf7d0";
     context.lineWidth = 2;
     context.beginPath();
-    drawRoundedRectPath(sb.x, sb.y, sb.w, sb.h, 10);
+    drawRoundedRectPath(sb.x, sb.y, sb.w, sb.h, 12);
     context.closePath();
     context.fill();
     context.stroke();
