@@ -2,15 +2,19 @@
 
 WoopWoop is being reworked into a browser-based tower defense game.
 
-The current build is a lobby prototype:
+The current build is an early tower defense prototype:
 
 - Players sign in with Firebase email/password, or use offline mode when Firebase
   config is missing.
 - Players can walk around the main lobby with WASD.
 - The lobby has queue boxes for **Single Player** and **Duos**.
-- Single player starts a placeholder tower defense scene.
+- Single player starts a tower defense test round.
 - Duos start once two players are waiting in the duo queue.
-- The tower defense game itself is currently a placeholder arena.
+- Enemies move tile-to-tile along a grid path and damage the base when they
+  reach the end.
+- The round is lost when base HP reaches 0.
+- Towers are not implemented yet. The next tower phase should use free
+  placement with hitbox overlap checks, not build tiles.
 
 ## What you need from Firebase
 
@@ -77,7 +81,7 @@ older build, update Firebase with the rules above.
 
 - **WASD** - move
 - **Shift** - sprint
-- **Escape** - return from the placeholder tower defense scene to the lobby
+- **Escape** - return from the tower defense round to the lobby
 
 Stand inside the Single Player or Duos queue box to join that queue. Leaving the
 box leaves the queue.
@@ -90,7 +94,7 @@ npm run dev
 ```
 
 Open the local URL in two browser tabs. Sign in with two different accounts, then
-walk both players into the Duos box to start the placeholder duo game.
+walk both players into the Duos box to start the tower defense round.
 
 ## Art assets
 
