@@ -1,7 +1,16 @@
 # WoopWoop
 
-A tiny top-down multiplayer prototype. Players move around a shared canvas with
-WASD and sync their positions through Firebase Realtime Database.
+WoopWoop is being reworked into a browser-based tower defense game.
+
+The current build is a lobby prototype:
+
+- Players sign in with Firebase email/password, or use offline mode when Firebase
+  config is missing.
+- Players can walk around the main lobby with WASD.
+- The lobby has queue boxes for **Single Player** and **Duos**.
+- Single player starts a placeholder tower defense scene.
+- Duos start once two players are waiting in the duo queue.
+- The tower defense game itself is currently a placeholder arena.
 
 ## What you need from Firebase
 
@@ -27,7 +36,7 @@ You can find them in Firebase Console:
 
 Also enable:
 
-- **Authentication** > **Sign-in method** > **Anonymous**
+- **Authentication** > **Sign-in method** > **Email/Password**
 - **Realtime Database** with a database URL
 
 For early local testing only, you can use permissive database rules:
@@ -43,43 +52,12 @@ For early local testing only, you can use permissive database rules:
             ".write": "auth != null && (auth.uid == $uid || !newData.exists())"
           }
         },
-        "kicked": {
-          "$uid": {
-            ".write": "auth != null"
-          }
-        },
-        "chat": {
-          "$messageId": {
-            ".write": "auth != null"
-          }
-        },
-        "blocks": {
-          "$cellId": {
-            ".write": "auth != null && ($cellId.matches(/^[0-9]+:[0-9]+$/))",
-            ".validate": "!newData.exists() || (newData.hasChildren(['type','placedBy','placedAt']) && newData.child('type').isString() && (newData.child('type').val() == 'woodWall' || newData.child('type').val() == 'stoneWall' || newData.child('type').val() == 'woodFloor' || newData.child('type').val() == 'stoneFloor' || newData.child('type').val() == 'window') && newData.child('placedBy').isString() && newData.child('placedBy').val().length <= 128)"
-          }
-        },
-        "cats": {
-          "$catId": {
-            ".write": "auth != null",
-            ".validate": "!newData.exists() || (newData.hasChildren(['x','y','vx','vy','state','ownerUid','ownerName','createdBy','hue','nextStateAt','zoomiesUntil','lastFedAt','updatedAt']) && newData.child('state').isString() && (newData.child('state').val() == 'idle' || newData.child('state').val() == 'wander' || newData.child('state').val() == 'follow' || newData.child('state').val() == 'zoomies') && newData.child('ownerUid').isString() && newData.child('ownerName').isString() && newData.child('createdBy').isString())"
-          }
-        }
-      }
-    },
-    "users": {
-      "$uid": {
-        ".read": "auth != null && auth.uid == $uid",
-        "profile": {
-          "paintColors": {
-            ".write": "auth != null && auth.uid == $uid",
-            ".validate": "!newData.exists() || (newData.hasChildren(['body','hands','feet']) && newData.child('body').isString() && newData.child('hands').isString() && newData.child('feet').isString())"
-          }
-        },
-        "ownedCats": {
-          "$catId": {
-            ".write": "auth != null && auth.uid == $uid",
-            ".validate": "!newData.exists() || newData.val() == true"
+        "queues": {
+          "$mode": {
+            "$uid": {
+              ".write": "auth != null && auth.uid == $uid",
+              ".validate": "$mode == 'single' || $mode == 'duo'"
+            }
           }
         }
       }
@@ -87,6 +65,15 @@ For early local testing only, you can use permissive database rules:
   }
 }
 ```
+
+## Controls
+
+- **WASD** - move
+- **Shift** - sprint
+- **Escape** - return from the placeholder tower defense scene to the lobby
+
+Stand inside the Single Player or Duos queue box to join that queue. Leaving the
+box leaves the queue.
 
 ## Run locally
 
@@ -96,7 +83,7 @@ npm run dev
 ```
 
 Open the local URL in two browser tabs. Sign in with two different accounts, then
-each tab writes its player to `rooms/lobby/players/{uid}`.
+walk both players into the Duos box to start the placeholder duo game.
 
 ## Art assets
 
@@ -106,8 +93,7 @@ Place the title logo at:
 public/assets/branding/title-logo.png
 ```
 
-The current source logo is 1254x900. It can stay that size; the app will scale
-it down on the title screen.
+The app will fall back to text if the logo is missing.
 
 ## Scripts
 
