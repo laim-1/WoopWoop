@@ -333,6 +333,9 @@ function startAnimationLoop() {
   }
   animationStarted = true;
   lastFrameAt = performance.now();
+  updateRenderedPlayers(0);
+  updateCamera(0);
+  safeDraw();
   requestAnimationFrame(tick);
 }
 
@@ -939,6 +942,7 @@ async function joinLobby(playerName: string) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(isFirebaseConfigured ? "In lobby" : "Offline lobby", isFirebaseConfigured ? "online" : "offline");
+  safeDraw();
   startAnimationLoop();
 
   if (isFirebaseConfigured) {
@@ -1155,7 +1159,12 @@ function draw() {
     drawLobby(camera);
   }
 
-  for (const player of renderedPlayers.values()) {
+  const playersToDraw = [...renderedPlayers.values()];
+  if (localPlayer && !renderedPlayers.has(localPlayer.id)) {
+    playersToDraw.push(localPlayer);
+  }
+
+  for (const player of playersToDraw) {
     drawPlayer(player, player.id === localPlayer?.id);
   }
   context.restore();
@@ -1164,12 +1173,36 @@ function draw() {
   context.font = "700 14px system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "alphabetic";
-  for (const player of renderedPlayers.values()) {
+  for (const player of playersToDraw) {
     context.fillText(
       player.id === localPlayer?.id ? "You" : player.name,
       worldToScreenX(camera.x, player.x),
       worldToScreenY(camera.y, player.y - PLAYER_RADIUS - 10)
     );
+  }
+}
+
+function drawRenderErrorFrame(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown render error";
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.fillStyle = "#1e293b";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#fee2e2";
+  context.font = "700 18px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("The lobby failed to render.", canvas.width / 2, canvas.height / 2 - 16);
+  context.font = "14px system-ui, sans-serif";
+  context.fillText(message, canvas.width / 2, canvas.height / 2 + 14);
+}
+
+function safeDraw() {
+  try {
+    draw();
+  } catch (error) {
+    setStatus("Render failed. Check console for details.", "error");
+    drawRenderErrorFrame(error);
+    console.error(error);
   }
 }
 
@@ -1189,7 +1222,7 @@ function tick(frameAt: number) {
     });
   }
 
-  draw();
+  safeDraw();
   requestAnimationFrame(tick);
 }
 
