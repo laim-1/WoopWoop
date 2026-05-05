@@ -4,7 +4,22 @@ import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFire
 import { BASE_TILES, ENEMY_PATH, ENEMY_TEMPLATES, GRID_COLUMNS, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_ROWS, GRID_SIZE, PATH_TILES, STARTING_MONEY, TOWER_DEFENSE_WORLD, TOWER_ORDER, TOWER_SPECS, WAVE_BREAK_SECONDS, gridTileKey } from "./game/constants";
 import { createMatchSync, ensureMatchRoom } from "./game/net/matchSync";
 import { createInitialMatchState } from "./game/simulation";
-import type { Enemy, EnemyTemplate, GridPoint, MatchPlayerState, MatchState, Player, PlayerRecord, PlayerSnapshot, QueueMode, SceneId, Tower, TowerSpec, TowerType } from "./game/types";
+import type {
+  Enemy,
+  EnemyTemplate,
+  GridPoint,
+  MatchPlayerState,
+  MatchState,
+  Player,
+  PlayerRecord,
+  PlayerSnapshot,
+  QueueMode,
+  SceneId,
+  Tower,
+  TowerShot,
+  TowerSpec,
+  TowerType,
+} from "./game/types";
 import "./styles.css";
 
 type RenderState = {
@@ -774,6 +789,23 @@ function resetTowerDefenseGame() {
   towerDefensePlayerState = {};
 }
 
+/** Firebase RTDB persists JS arrays as objects with numeric keys; `snapshot.val()` is not Array.isArray. */
+function firebaseIndexedList<T>(value: unknown): T[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, T>;
+    const keys = Object.keys(obj).filter((k) => /^\d+$/.test(k));
+    keys.sort((a, b) => Number(a) - Number(b));
+    return keys.map((k) => obj[k]).filter((item): item is T => item !== undefined && item !== null);
+  }
+  return [];
+}
+
 /** RTDB can return partial or bad numbers — normalize so spawning/timers stay valid. */
 function coerceMatchStateFromRemote(raw: MatchState): MatchState {
   const base = createInitialMatchState(typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now());
@@ -784,15 +816,9 @@ function coerceMatchStateFromRemote(raw: MatchState): MatchState {
   if (typeof raw.waveBreakTimer !== "number" || !Number.isFinite(raw.waveBreakTimer)) {
     m.waveBreakTimer = base.waveBreakTimer;
   }
-  if (!Array.isArray(raw.enemies)) {
-    m.enemies = [];
-  }
-  if (!Array.isArray(raw.towers)) {
-    m.towers = [];
-  }
-  if (!Array.isArray(raw.shots)) {
-    m.shots = [];
-  }
+  m.enemies = firebaseIndexedList<Enemy>((raw as { enemies?: unknown }).enemies);
+  m.towers = firebaseIndexedList<Tower>((raw as { towers?: unknown }).towers);
+  m.shots = firebaseIndexedList<TowerShot>((raw as { shots?: unknown }).shots);
   return m;
 }
 
