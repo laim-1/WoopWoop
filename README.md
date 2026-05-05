@@ -12,9 +12,11 @@ The current build is an early tower defense prototype:
 - Duos start once two players are waiting in the duo queue.
 - Enemies move tile-to-tile along a grid path and damage the base when they
   reach the end.
+- Players carry a selected tower in front of them and click to place it.
+- Towers cannot overlap the path, base, or another tower hitbox.
+- Towers automatically target enemies in range, damage them, and kills award
+  money for more towers.
 - The round is lost when base HP reaches 0.
-- Towers are not implemented yet. The next tower phase should use free
-  placement with hitbox overlap checks, not build tiles.
 
 ## What you need from Firebase
 
@@ -81,10 +83,31 @@ older build, update Firebase with the rules above.
 
 - **WASD** - move
 - **Shift** - sprint
+- **1-5** - select a tower to carry
+- **Left click** - place the carried tower in front of the player
 - **Escape** - return from the tower defense round to the lobby
 
 Stand inside the Single Player or Duos queue box to join that queue. Leaving the
 box leaves the queue.
+
+## Towers
+
+The first five towers are intentionally simple:
+
+| Slot | Tower | Role |
+| --- | --- | --- |
+| 1 | Dart | Cheap basic single-target damage |
+| 2 | Cannon | Slower splash damage |
+| 3 | Frost | Low damage plus enemy slow |
+| 4 | Sniper | Long range, high damage, slow fire rate |
+| 5 | Rapid | Shorter range, fast fire rate |
+
+Tower placement is free-form: there are no build tiles. Placement is valid as
+long as the circular tower hitbox does not overlap the enemy path, base tiles,
+world edge, or another tower.
+
+The current tower defense round state is local to each browser, so these tower
+and combat features do not add any new Firebase Realtime Database rules yet.
 
 ## Run locally
 
