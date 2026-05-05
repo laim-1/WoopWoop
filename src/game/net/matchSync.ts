@@ -16,7 +16,6 @@ type MatchSyncOptions = {
 type MatchSyncController = {
   submitPlaceTower: (type: TowerType, x: number, y: number) => Promise<void>;
   submitSelectedTower: (type: TowerType) => Promise<void>;
-  submitStartRound: () => Promise<void>;
   stop: () => void;
 };
 
@@ -157,15 +156,6 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
         playerId: localPlayerId,
         type: "setSelectedTower",
         payload: { type },
-      });
-    },
-    async submitStartRound() {
-      await submitEvent({
-        id: eventId(localPlayerId),
-        at: Date.now(),
-        playerId: localPlayerId,
-        type: "startRound",
-        payload: {},
       });
     },
     stop() {

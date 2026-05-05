@@ -105,8 +105,6 @@ export type MatchState = {
   spawnedThisWave: number;
   spawnTimer: number;
   waveBreakTimer: number;
-  /** When false, the host freezes waves until a Start event is processed. */
-  roundStarted: boolean;
   nextEnemyId: number;
   nextTowerId: number;
   gameOver: boolean;
@@ -135,12 +133,5 @@ export type MatchInputEvent =
       type: "setReadyState";
       at: number;
       payload: { readyState: "pending" | "ready" };
-    }
-  | {
-      id: string;
-      playerId: string;
-      type: "startRound";
-      at: number;
-      payload: Record<string, never>;
     };
 
