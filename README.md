@@ -39,7 +39,7 @@ Also enable:
 - **Authentication** > **Sign-in method** > **Email/Password**
 - **Realtime Database** with a database URL
 
-For early local testing only, you can use permissive database rules:
+For early local testing only, you can use these lobby rules:
 
 ```json
 {
@@ -49,14 +49,16 @@ For early local testing only, you can use permissive database rules:
         ".read": "auth != null",
         "players": {
           "$uid": {
-            ".write": "auth != null && (auth.uid == $uid || !newData.exists())"
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "!newData.exists() || (newData.hasChildren(['name','x','y','facingX','facingY','moving','step','scene','lastSeen']) && newData.child('name').isString() && newData.child('name').val().length <= 18 && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('facingX').isNumber() && newData.child('facingY').isNumber() && newData.child('moving').isBoolean() && newData.child('step').isNumber() && newData.child('scene').isString() && (newData.child('scene').val() == 'lobby' || newData.child('scene').val() == 'towerDefense'))"
           }
         },
         "queues": {
           "$mode": {
+            ".validate": "$mode == 'single' || $mode == 'duo'",
             "$uid": {
               ".write": "auth != null && auth.uid == $uid",
-              ".validate": "$mode == 'single' || $mode == 'duo'"
+              ".validate": "!newData.exists() || (newData.hasChildren(['name','queuedAt']) && newData.child('name').isString() && newData.child('name').val().length <= 18)"
             }
           }
         }
@@ -65,6 +67,11 @@ For early local testing only, you can use permissive database rules:
   }
 }
 ```
+
+These rules intentionally allow deletes (`!newData.exists()`) so the client can
+clean up a player's lobby and queue records when they leave a portal, enter a
+match, or disconnect. If you see `Queue cleanup failed: PERMISSION_DENIED` in an
+older build, update Firebase with the rules above.
 
 ## Controls
 
