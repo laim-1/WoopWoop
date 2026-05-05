@@ -283,6 +283,10 @@ let currentMatchPlayerIds: string[] = [];
 /** True when WASD is held; used so limb animation stops immediately on key release (not when velocity decays). */
 let localMovementInput = false;
 
+let pointerClientX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
+let pointerClientY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
+let hasPointerSample = false;
+
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
@@ -431,8 +435,8 @@ function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
   sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
   sceneHelp.textContent = inMatch
-    ? "Enemies follow the grid path. Protect the base or press Escape to return."
-    : "WASD to move. Stand inside a portal box to queue.";
+    ? "Enemies follow the grid path. WASD moves, mouse aims. Escape returns to lobby."
+    : "WASD to move, mouse to aim. Stand inside a portal box to queue.";
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
 }
@@ -567,18 +571,26 @@ function updateLocalPlayer(deltaSeconds: number) {
   localMovementInput = hasInput;
 
   if (hasInput) {
-    const inputLen = Math.hypot(dx, dy);
-    localPlayer.facingX = dx / inputLen;
-    localPlayer.facingY = dy / inputLen;
     localPlayer.step += deltaSeconds * (sprinting ? 9.5 : 6.5);
   } else if (movementSpeed > 2) {
     localPlayer.step = 0;
-    localPlayer.facingX = localVelocityX / movementSpeed;
-    localPlayer.facingY = localVelocityY / movementSpeed;
   } else {
     localVelocityX = 0;
     localVelocityY = 0;
     localPlayer.step = 0;
+  }
+
+  if (hasPointerSample) {
+    const camera = getCameraCenter();
+    const aimX = screenToWorldX(camera.x, pointerClientX);
+    const aimY = screenToWorldY(camera.y, pointerClientY);
+    const lookDx = aimX - localPlayer.x;
+    const lookDy = aimY - localPlayer.y;
+    const lookLen = Math.hypot(lookDx, lookDy);
+    if (lookLen > 1e-4) {
+      localPlayer.facingX = lookDx / lookLen;
+      localPlayer.facingY = lookDy / lookLen;
+    }
   }
 
   const world = activeWorld();
@@ -1326,6 +1338,7 @@ async function joinLobby(playerName: string) {
   localVelocityX = 0;
   localVelocityY = 0;
   localMovementInput = false;
+  hasPointerSample = false;
   cameraX = localPlayer.x;
   cameraY = localPlayer.y;
   hasJoinedLobby = true;
@@ -1667,12 +1680,6 @@ function drawPlayer(player: Player, isLocal: boolean) {
     context.stroke();
   }
 
-  context.fillStyle = bodyColor;
-  context.beginPath();
-  context.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
-  context.fill();
-  context.stroke();
-
   context.fillStyle = handColor;
   context.strokeStyle = outlineColor;
   context.lineWidth = 3;
@@ -1688,6 +1695,12 @@ function drawPlayer(player: Player, isLocal: boolean) {
     context.fill();
     context.stroke();
   }
+
+  context.fillStyle = bodyColor;
+  context.beginPath();
+  context.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
 
   context.fillStyle = "#111827";
   context.beginPath();
@@ -1814,6 +1827,15 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("keyup", (event) => {
   keys.delete(event.code);
+});
+
+window.addEventListener("pointermove", (event) => {
+  if (!localPlayer) {
+    return;
+  }
+  pointerClientX = event.clientX;
+  pointerClientY = event.clientY;
+  hasPointerSample = true;
 });
 
 canvas.addEventListener("pointerdown", (event) => {
