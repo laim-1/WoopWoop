@@ -314,6 +314,31 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function drawRoundedRectPath(x: number, y: number, width: number, height: number, radius: number) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+}
+
+function startAnimationLoop() {
+  if (animationStarted) {
+    return;
+  }
+  animationStarted = true;
+  lastFrameAt = performance.now();
+  updateRenderedPlayers(0);
+  updateCamera(0);
+  safeDraw();
+  requestAnimationFrame(tick);
+}
+
 function activeWorld() {
   return localPlayer?.scene === "towerDefense" ? towerDefenseWorld : lobbyWorld;
 }
@@ -917,20 +942,25 @@ async function joinLobby(playerName: string) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(isFirebaseConfigured ? "In lobby" : "Offline lobby", isFirebaseConfigured ? "online" : "offline");
+  safeDraw();
+  startAnimationLoop();
 
   if (isFirebaseConfigured) {
-    await syncLocalPlayer();
-    await onDisconnect(playerRef(localPlayer.id)).remove();
-    await onDisconnect(queueEntryRef("single", localPlayer.id)).remove();
-    await onDisconnect(queueEntryRef("duo", localPlayer.id)).remove();
+    void syncLocalPlayer().catch((error) => {
+      setStatus(`Initial sync failed: ${error.message}`, "error");
+    });
+    onDisconnect(playerRef(localPlayer.id)).remove().catch((error) => {
+      setStatus(`Disconnect cleanup failed: ${error.message}`, "error");
+    });
+    onDisconnect(queueEntryRef("single", localPlayer.id)).remove().catch((error) => {
+      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+    });
+    onDisconnect(queueEntryRef("duo", localPlayer.id)).remove().catch((error) => {
+      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+    });
     subscribeToPlayers();
     subscribeToQueue("single");
     subscribeToQueue("duo");
-  }
-
-  if (!animationStarted) {
-    animationStarted = true;
-    requestAnimationFrame(tick);
   }
 }
 
@@ -969,7 +999,7 @@ function drawLobby(camera: { x: number; y: number }) {
     context.strokeStyle = isActive ? "#ffffff" : "rgba(255, 255, 255, 0.65)";
     context.lineWidth = isActive ? 8 : 4;
     context.beginPath();
-    context.roundRect(pad.x, pad.y, pad.width, pad.height, 28);
+    drawRoundedRectPath(pad.x, pad.y, pad.width, pad.height, 28);
     context.fill();
     context.stroke();
 
@@ -1041,7 +1071,7 @@ function drawTowerDefensePlaceholder() {
 
   context.fillStyle = "#d85757";
   context.beginPath();
-  context.roundRect(1520, 820, 180, 180, 24);
+  drawRoundedRectPath(1520, 820, 180, 180, 24);
   context.fill();
 
   context.fillStyle = "#f2ead8";
@@ -1129,7 +1159,12 @@ function draw() {
     drawLobby(camera);
   }
 
-  for (const player of renderedPlayers.values()) {
+  const playersToDraw = [...renderedPlayers.values()];
+  if (localPlayer && !renderedPlayers.has(localPlayer.id)) {
+    playersToDraw.push(localPlayer);
+  }
+
+  for (const player of playersToDraw) {
     drawPlayer(player, player.id === localPlayer?.id);
   }
   context.restore();
@@ -1138,12 +1173,36 @@ function draw() {
   context.font = "700 14px system-ui, sans-serif";
   context.textAlign = "center";
   context.textBaseline = "alphabetic";
-  for (const player of renderedPlayers.values()) {
+  for (const player of playersToDraw) {
     context.fillText(
       player.id === localPlayer?.id ? "You" : player.name,
       worldToScreenX(camera.x, player.x),
       worldToScreenY(camera.y, player.y - PLAYER_RADIUS - 10)
     );
+  }
+}
+
+function drawRenderErrorFrame(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unknown render error";
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.fillStyle = "#1e293b";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#fee2e2";
+  context.font = "700 18px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("The lobby failed to render.", canvas.width / 2, canvas.height / 2 - 16);
+  context.font = "14px system-ui, sans-serif";
+  context.fillText(message, canvas.width / 2, canvas.height / 2 + 14);
+}
+
+function safeDraw() {
+  try {
+    draw();
+  } catch (error) {
+    setStatus("Render failed. Check console for details.", "error");
+    drawRenderErrorFrame(error);
+    console.error(error);
   }
 }
 
@@ -1163,7 +1222,7 @@ function tick(frameAt: number) {
     });
   }
 
-  draw();
+  safeDraw();
   requestAnimationFrame(tick);
 }
 
