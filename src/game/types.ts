@@ -107,7 +107,6 @@ export type MatchState = {
   waveBreakTimer: number;
   nextEnemyId: number;
   nextTowerId: number;
-  roundStarted: boolean;
   gameOver: boolean;
   version: number;
   updatedAt: number;
@@ -134,12 +133,5 @@ export type MatchInputEvent =
       type: "setReadyState";
       at: number;
       payload: { readyState: "pending" | "ready" };
-    }
-  | {
-      id: string;
-      playerId: string;
-      type: "startRound";
-      at: number;
-      payload: Record<string, never>;
     };
 

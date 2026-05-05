@@ -229,7 +229,12 @@ const lobbyWorld = {
 const HOTBAR_SLOT_W = 74;
 const HOTBAR_SLOT_H = 34;
 const HOTBAR_GAP = 5;
-const HOTBAR_RIGHT_PAD = 14;
+/** Distance from viewport right edge to the tower shop outer border. */
+const TOWER_SHOP_SCREEN_PAD = 12;
+/** Tower shop interior padding (between border and slot stack). */
+const TOWER_SHOP_INNER_PAD = 14;
+const TOWER_SHOP_TITLE_HEIGHT = 22;
+const TOWER_SHOP_CORNER_RADIUS = 12;
 
 const queuePads: QueuePad[] = [
   {
@@ -289,6 +294,8 @@ let localMovementInput = false;
 
 let pointerClientX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
 let pointerClientY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
+/** Placement ghost / map clicks only after picking a tower in the shop (click or digit). */
+let towerShopArmed = false;
 
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
@@ -438,7 +445,7 @@ function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
   sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
   sceneHelp.textContent = inMatch
-    ? "WASD to move. Choose tower on the right, click the map to place. Start round when ready. Escape returns to lobby."
+    ? "WASD to move. Open the Towers shop at right, choose a tower, then click the map to place. Esc cancels placement or exits."
     : "WASD to move. Stand inside a portal box to queue.";
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
@@ -964,20 +971,38 @@ function selectedTowerSpec() {
   return TOWER_SPECS[selectedTowerType];
 }
 
-function towerDefenseHotbarLayout() {
-  const colX = window.innerWidth - HOTBAR_SLOT_W - HOTBAR_RIGHT_PAD;
-  const totalH = TOWER_ORDER.length * (HOTBAR_SLOT_H + HOTBAR_GAP) - HOTBAR_GAP;
-  const startY = Math.max(96, Math.floor(window.innerHeight / 2 - totalH / 2));
-  return { colX, startY };
+/** Layout for the bordered tower shop panel on the right. */
+function towerShopPanelLayout() {
+  const stackH = TOWER_ORDER.length * (HOTBAR_SLOT_H + HOTBAR_GAP) - HOTBAR_GAP;
+  const innerW = HOTBAR_SLOT_W + TOWER_SHOP_INNER_PAD * 2;
+  const panelInnerH = TOWER_SHOP_TITLE_HEIGHT + 10 + stackH;
+  const border = 6;
+  const panelW = innerW + border * 2;
+  const panelH = panelInnerH + border * 2 + TOWER_SHOP_INNER_PAD * 2;
+  const panelX = window.innerWidth - TOWER_SHOP_SCREEN_PAD - panelW;
+  const panelY = Math.max(72, Math.floor(window.innerHeight / 2 - panelH / 2));
+  const contentLeft = panelX + border + TOWER_SHOP_INNER_PAD;
+  const stackTop = panelY + border + TOWER_SHOP_INNER_PAD + TOWER_SHOP_TITLE_HEIGHT + 10;
+  const slotX = contentLeft + (innerW - HOTBAR_SLOT_W) / 2;
+  return {
+    panelX,
+    panelY,
+    panelW,
+    panelH,
+    innerW,
+    border,
+    slotX,
+    slotTopY: stackTop,
+  };
 }
 
 function hotbarSlotFromScreenPoint(x: number, y: number) {
-  const { colX, startY } = towerDefenseHotbarLayout();
-  if (x < colX || x > colX + HOTBAR_SLOT_W) {
+  const { slotX, slotTopY } = towerShopPanelLayout();
+  if (x < slotX || x > slotX + HOTBAR_SLOT_W) {
     return null;
   }
   for (let index = 0; index < TOWER_ORDER.length; index += 1) {
-    const top = startY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
+    const top = slotTopY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
     if (y >= top && y <= top + HOTBAR_SLOT_H) {
       return TOWER_ORDER[index];
     }
@@ -985,20 +1010,10 @@ function hotbarSlotFromScreenPoint(x: number, y: number) {
   return null;
 }
 
-function startRoundButtonScreenLayout() {
-  const bw = 176;
-  const bh = 40;
-  return {
-    left: window.innerWidth / 2 - bw / 2,
-    top: 10,
-    width: bw,
-    height: bh
-  };
-}
-
-function pointerHitsStartRoundButton(px: number, py: number) {
-  const r = startRoundButtonScreenLayout();
-  return px >= r.left && px <= r.left + r.width && py >= r.top && py <= r.top + r.height;
+/** True if click is anywhere on the tower shop panel (backdrop + chrome), not placement. */
+function pointerHitsTowerShopPanel(px: number, py: number) {
+  const { panelX, panelY, panelW, panelH } = towerShopPanelLayout();
+  return px >= panelX && px <= panelX + panelW && py >= panelY && py <= panelY + panelH;
 }
 
 /** World position under the cursor in tower-defense scene (for placement ghost and builds). */
@@ -1011,20 +1026,6 @@ function towerCursorWorld() {
     x: screenToWorldX(cam.x, pointerClientX),
     y: screenToWorldY(cam.y, pointerClientY)
   };
-}
-
-function requestStartRound() {
-  if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver || towerDefenseGame.roundStarted) {
-    return;
-  }
-  if (isFirebaseConfigured && matchSync) {
-    void matchSync.submitStartRound().catch((networkError: unknown) => {
-      setStatus(`Start round failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
-    });
-    return;
-  }
-  towerDefenseGame.roundStarted = true;
-  setStatus("Round started.", "offline");
 }
 
 function towerOverlapsBlockedTile(x: number, y: number, radius: number) {
@@ -1080,6 +1081,10 @@ function getTowerPlacementError(x: number, y: number, spec: TowerSpec) {
 }
 
 function placeSelectedTower() {
+  if (!towerShopArmed) {
+    setStatus("Choose a tower in the shop first, then click the map.", isFirebaseConfigured ? "online" : "offline");
+    return;
+  }
   const pos = towerCursorWorld();
   if (!pos) {
     return;
@@ -1091,6 +1096,7 @@ function placeSelectedTower() {
     return;
   }
   if (isFirebaseConfigured && matchSync && localPlayer) {
+    towerShopArmed = false;
     void matchSync.submitPlaceTower(spec.type, pos.x, pos.y).catch((networkError: unknown) => {
       setStatus(`Place failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
     });
@@ -1110,6 +1116,7 @@ function placeSelectedTower() {
     cooldown: 0
   });
   towerDefenseGame.nextTowerId += 1;
+  towerShopArmed = false;
   setStatus(`${spec.name} placed.`, isFirebaseConfigured ? "online" : "offline");
 }
 
@@ -1122,16 +1129,14 @@ function updateTowerDefenseGame(deltaSeconds: number) {
   }
 
   const waveConfig = currentWaveConfig();
-  if (towerDefenseGame.roundStarted) {
-    if (towerDefenseGame.waveBreakTimer > 0) {
-      towerDefenseGame.waveBreakTimer = Math.max(0, towerDefenseGame.waveBreakTimer - deltaSeconds);
-    } else if (towerDefenseGame.spawnedThisWave < waveConfig.totalEnemies) {
-      towerDefenseGame.spawnTimer -= deltaSeconds;
-      if (towerDefenseGame.spawnTimer <= 0) {
-        spawnEnemy(enemyTemplateForWave(towerDefenseGame.wave, towerDefenseGame.spawnedThisWave));
-        towerDefenseGame.spawnedThisWave += 1;
-        towerDefenseGame.spawnTimer = waveConfig.spawnInterval;
-      }
+  if (towerDefenseGame.waveBreakTimer > 0) {
+    towerDefenseGame.waveBreakTimer = Math.max(0, towerDefenseGame.waveBreakTimer - deltaSeconds);
+  } else if (towerDefenseGame.spawnedThisWave < waveConfig.totalEnemies) {
+    towerDefenseGame.spawnTimer -= deltaSeconds;
+    if (towerDefenseGame.spawnTimer <= 0) {
+      spawnEnemy(enemyTemplateForWave(towerDefenseGame.wave, towerDefenseGame.spawnedThisWave));
+      towerDefenseGame.spawnedThisWave += 1;
+      towerDefenseGame.spawnTimer = waveConfig.spawnInterval;
     }
   }
 
@@ -1207,6 +1212,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
     };
   }
   selectedTowerType = "dart";
+  towerShopArmed = false;
   activeQueueMode = null;
   queueEnteredAt = 0;
   // Keep filled duo queues visible briefly so both clients can observe the pair
@@ -1234,7 +1240,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
         if (!state) {
           return;
         }
-        towerDefenseGame = { ...state, roundStarted: state.roundStarted ?? false };
+        towerDefenseGame = state;
         towerDefensePlayerState = playerState;
       },
       onStatus: (message) => {
@@ -1256,6 +1262,7 @@ async function returnToLobby() {
   resetTowerDefenseGame();
   currentMatchPlayerIds = [];
   selectedTowerType = "dart";
+  towerShopArmed = false;
   localPlayer.scene = "lobby";
   localPlayer.matchId = null;
   localPlayer.x = lobbyWorld.width / 2;
@@ -1369,6 +1376,7 @@ async function joinLobby(playerName: string) {
   localVelocityX = 0;
   localVelocityY = 0;
   localMovementInput = false;
+  towerShopArmed = false;
   cameraX = localPlayer.x;
   cameraY = localPlayer.y;
   hasJoinedLobby = true;
@@ -1531,7 +1539,7 @@ function drawTowerShots() {
 }
 
 function drawTowerCursorPreview() {
-  if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver) {
+  if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver || !towerShopArmed) {
     return;
   }
   const pos = towerCursorWorld();
@@ -1592,35 +1600,46 @@ function drawTowerDefenseHud() {
   context.fillStyle = "#f8fafc";
   context.fillText(`Base HP ${towerDefenseGame.baseHp}/${towerDefenseGame.baseMaxHp}`, 38, window.innerHeight - 82);
 
-  if (!towerDefenseGame.roundStarted && !towerDefenseGame.gameOver) {
-    const btn = startRoundButtonScreenLayout();
-    context.fillStyle = "rgba(22, 101, 52, 0.92)";
-    context.fillRect(btn.left, btn.top, btn.width, btn.height);
-    context.strokeStyle = "rgba(187, 247, 208, 0.9)";
-    context.lineWidth = 2;
-    context.strokeRect(btn.left + 0.5, btn.top + 0.5, btn.width - 1, btn.height - 1);
-    context.fillStyle = "#ecfdf5";
-    context.font = "800 14px system-ui, sans-serif";
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.fillText("Start round", btn.left + btn.width / 2, btn.top + btn.height / 2);
-    context.textAlign = "left";
-    context.textBaseline = "alphabetic";
-  }
+  const lay = towerShopPanelLayout();
+  context.fillStyle = "rgba(15, 23, 42, 0.72)";
+  context.strokeStyle = "rgba(226, 232, 240, 0.45)";
+  context.lineWidth = 2;
+  context.beginPath();
+  drawRoundedRectPath(lay.panelX, lay.panelY, lay.panelW, lay.panelH, TOWER_SHOP_CORNER_RADIUS);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.strokeStyle = "rgba(96, 165, 250, 0.35)";
+  context.lineWidth = 1;
+  context.beginPath();
+  drawRoundedRectPath(lay.panelX + 5, lay.panelY + 5, lay.panelW - 10, lay.panelH - 10, TOWER_SHOP_CORNER_RADIUS - 4);
+  context.closePath();
+  context.stroke();
 
-  const { colX, startY } = towerDefenseHotbarLayout();
+  context.fillStyle = "#cbd5f5";
+  context.font = "900 13px system-ui, sans-serif";
+  context.textAlign = "center";
+  context.fillText("Tower shop", lay.panelX + lay.panelW / 2, lay.panelY + lay.border + TOWER_SHOP_INNER_PAD + 14);
+
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  context.font = "700 11px system-ui, sans-serif";
+  context.fillStyle = "rgba(226, 232, 240, 0.7)";
+  context.fillText(towerShopArmed ? "Placing — Esc to cancel" : "Pick a tower, then click the map.", lay.slotX - 10, lay.slotTopY - 14);
+
   for (const [index, type] of TOWER_ORDER.entries()) {
     const spec = TOWER_SPECS[type];
     const selected = selectedTowerType === type;
-    const slotTop = startY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
-    context.fillStyle = selected ? "rgba(96, 165, 250, 0.52)" : "rgba(30, 41, 59, 0.92)";
-    context.fillRect(colX, slotTop, HOTBAR_SLOT_W, HOTBAR_SLOT_H);
-    context.strokeStyle = selected ? "#bfdbfe" : "rgba(226, 232, 240, 0.22)";
-    context.strokeRect(colX + 0.5, slotTop + 0.5, HOTBAR_SLOT_W - 1, HOTBAR_SLOT_H - 1);
+    const slotTop = lay.slotTopY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
+    context.fillStyle = selected ? "rgba(96, 165, 250, 0.55)" : "rgba(30, 41, 59, 0.95)";
+    context.fillRect(lay.slotX, slotTop, HOTBAR_SLOT_W, HOTBAR_SLOT_H);
+    context.strokeStyle = selected ? "#bfdbfe" : "rgba(226, 232, 240, 0.25)";
+    context.lineWidth = selected ? 2 : 1;
+    context.strokeRect(lay.slotX + 0.5, slotTop + 0.5, HOTBAR_SLOT_W - 1, HOTBAR_SLOT_H - 1);
     context.fillStyle = localMoney >= spec.cost ? "#f8fafc" : "#fca5a5";
     context.font = "800 10px system-ui, sans-serif";
-    context.fillText(`${index + 1} ${spec.name}`, colX + 6, slotTop + 16);
-    context.fillText(`$${spec.cost}`, colX + 6, slotTop + 28);
+    context.fillText(`${index + 1} ${spec.name}`, lay.slotX + 6, slotTop + 16);
+    context.fillText(`$${spec.cost}`, lay.slotX + 6, slotTop + 28);
   }
 
   if (towerDefenseGame.gameOver) {
@@ -1687,7 +1706,7 @@ function drawTowerDefenseGame() {
   context.font = "900 38px system-ui, sans-serif";
   context.fillText("Tower Defense", TOWER_DEFENSE_WORLD.width / 2, 92);
   context.font = "18px system-ui, sans-serif";
-  context.fillText("Pick a tower on the right, hover the map, then click to place.", TOWER_DEFENSE_WORLD.width / 2, 128);
+  context.fillText("Open the Towers shop → pick a tower → click where to build.", TOWER_DEFENSE_WORLD.width / 2, 128);
 
   drawTowerDefenseHud();
 }
@@ -1860,6 +1879,7 @@ window.addEventListener("keydown", (event) => {
   } else if (["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"].includes(event.code) && localPlayer?.scene === "towerDefense") {
     const slot = Number(event.code.replace("Digit", "")) - 1;
     selectedTowerType = TOWER_ORDER[slot] ?? selectedTowerType;
+    towerShopArmed = true;
     if (isFirebaseConfigured && matchSync) {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
@@ -1867,6 +1887,12 @@ window.addEventListener("keydown", (event) => {
     setStatus(`Selected ${spec.name} ($${spec.cost}). Click the map to place.`, isFirebaseConfigured ? "online" : "offline");
     event.preventDefault();
   } else if (event.code === "Escape" && localPlayer?.scene === "towerDefense") {
+    if (towerShopArmed) {
+      towerShopArmed = false;
+      setStatus("Placement cancelled.", isFirebaseConfigured ? "online" : "offline");
+      event.preventDefault();
+      return;
+    }
     void returnToLobby();
     event.preventDefault();
   }
@@ -1888,19 +1914,19 @@ canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || localPlayer?.scene !== "towerDefense") {
     return;
   }
-  if (pointerHitsStartRoundButton(event.clientX, event.clientY) && !towerDefenseGame.gameOver && !towerDefenseGame.roundStarted) {
-    requestStartRound();
-    event.preventDefault();
-    return;
-  }
   const clickedSlot = hotbarSlotFromScreenPoint(event.clientX, event.clientY);
   if (clickedSlot !== null) {
     selectedTowerType = clickedSlot;
+    towerShopArmed = true;
     if (isFirebaseConfigured && matchSync) {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
     const spec = selectedTowerSpec();
     setStatus(`Selected ${spec.name} ($${spec.cost}). Click the map to place.`, isFirebaseConfigured ? "online" : "offline");
+    event.preventDefault();
+    return;
+  }
+  if (pointerHitsTowerShopPanel(event.clientX, event.clientY)) {
     event.preventDefault();
     return;
   }
