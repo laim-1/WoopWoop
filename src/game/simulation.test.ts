@@ -33,9 +33,12 @@ describe("simulation", () => {
     expect(state.version).toBeGreaterThan(beforeVersion);
   });
 
-  it("spawns enemies over time once the match is running", () => {
+  it("spawns enemies over time after the round is started", () => {
     const state = createInitialMatchState();
     const playerState = { p1: createInitialPlayerState() };
+    applyMatchEvents(state, playerState, [
+      { id: "sr1", at: Date.now(), playerId: "p1", type: "startRound", payload: {} },
+    ]);
     simulateMatchTick(state, playerState, 0.2);
     expect(state.spawnedThisWave >= 1 || state.enemies.length >= 1).toBe(true);
   });
