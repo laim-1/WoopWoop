@@ -53,11 +53,40 @@ type QueuePad = {
   color: string;
 };
 
-type MatchInfo = {
+type GridPoint = {
+  gx: number;
+  gy: number;
+};
+
+type EnemyType = "grunt" | "runner" | "tank";
+
+type EnemyTemplate = {
+  kind: EnemyType;
+  hp: number;
+  speed: number;
+  damage: number;
+  radius: number;
+  color: string;
+};
+
+type Enemy = EnemyTemplate & {
   id: string;
-  mode: QueueMode;
-  playerIds: string[];
-  startedAt: number;
+  x: number;
+  y: number;
+  maxHp: number;
+  pathIndex: number;
+  progress: number;
+};
+
+type TowerDefenseGame = {
+  baseHp: number;
+  baseMaxHp: number;
+  wave: number;
+  enemies: Enemy[];
+  spawnedThisWave: number;
+  spawnTimer: number;
+  waveBreakTimer: number;
+  gameOver: boolean;
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -250,6 +279,44 @@ const towerDefenseWorld = {
   height: 1200
 };
 
+const GRID_SIZE = 90;
+const GRID_COLUMNS = 16;
+const GRID_ROWS = 10;
+const GRID_ORIGIN_X = (towerDefenseWorld.width - GRID_COLUMNS * GRID_SIZE) / 2;
+const GRID_ORIGIN_Y = 170;
+const BASE_MAX_HP = 20;
+const WAVE_BREAK_SECONDS = 4;
+const ENEMY_PATH: GridPoint[] = [
+  { gx: 0, gy: 1 },
+  { gx: 1, gy: 1 },
+  { gx: 2, gy: 1 },
+  { gx: 3, gy: 1 },
+  { gx: 4, gy: 1 },
+  { gx: 5, gy: 1 },
+  { gx: 5, gy: 2 },
+  { gx: 5, gy: 3 },
+  { gx: 5, gy: 4 },
+  { gx: 6, gy: 4 },
+  { gx: 7, gy: 4 },
+  { gx: 8, gy: 4 },
+  { gx: 9, gy: 4 },
+  { gx: 9, gy: 5 },
+  { gx: 9, gy: 6 },
+  { gx: 10, gy: 6 },
+  { gx: 11, gy: 6 },
+  { gx: 12, gy: 6 },
+  { gx: 13, gy: 6 },
+  { gx: 14, gy: 6 },
+  { gx: 15, gy: 6 }
+];
+const BASE_TILES = new Set(["15:5", "15:6", "15:7"]);
+const PATH_TILES = new Set(ENEMY_PATH.map((tile) => gridTileKey(tile)));
+const ENEMY_TEMPLATES: Record<EnemyType, EnemyTemplate> = {
+  grunt: { kind: "grunt", hp: 12, speed: 115, damage: 1, radius: 18, color: "#ef8354" },
+  runner: { kind: "runner", hp: 8, speed: 175, damage: 1, radius: 15, color: "#f6d365" },
+  tank: { kind: "tank", hp: 36, speed: 75, damage: 3, radius: 24, color: "#b86adf" }
+};
+
 const queuePads: QueuePad[] = [
   {
     mode: "single",
@@ -293,12 +360,25 @@ let lastFrameAt = performance.now();
 let lastSyncAt = 0;
 let activeQueueMode: QueueMode | null = null;
 let queueEnteredAt = 0;
-let localMatch: MatchInfo | null = null;
 let animationStarted = false;
 let hasJoinedLobby = false;
 let playersUnsubscribe: Unsubscribe | null = null;
 let singleQueueUnsubscribe: Unsubscribe | null = null;
 let duoQueueUnsubscribe: Unsubscribe | null = null;
+let towerDefenseGame: TowerDefenseGame = createTowerDefenseGame();
+
+function createTowerDefenseGame(): TowerDefenseGame {
+  return {
+    baseHp: BASE_MAX_HP,
+    baseMaxHp: BASE_MAX_HP,
+    wave: 1,
+    enemies: [],
+    spawnTimer: 0,
+    spawnedThisWave: 0,
+    waveBreakTimer: 0,
+    gameOver: false
+  };
+}
 
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
@@ -405,6 +485,10 @@ function setStatus(message: string, state: "online" | "offline" | "error") {
   statusEl.dataset.state = state;
 }
 
+function logBackgroundFailure(label: string, error: unknown) {
+  console.warn(label, error);
+}
+
 function setAuthMode(mode: "signin" | "create") {
   const signInMode = mode === "signin";
   signInForm.classList.toggle("is-hidden", !signInMode);
@@ -442,9 +526,9 @@ function showGameShell() {
 
 function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
-  sceneTitle.textContent = inMatch ? "Tower Defense Placeholder" : "Main Lobby";
+  sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
   sceneHelp.textContent = inMatch
-    ? "Placeholder arena only. Press Escape or Return to Lobby when ready."
+    ? "Enemies follow the grid path. Protect the base or press Escape to return."
     : "WASD to move. Stand inside a portal box to queue.";
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
@@ -671,7 +755,7 @@ function clearLocalQueues() {
   queueEnteredAt = 0;
   if (previousMode) {
     void leaveQueue(previousMode).catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
   }
 }
@@ -679,7 +763,7 @@ function clearLocalQueues() {
 function scheduleQueueCleanup(mode: QueueMode, delayMs = 0) {
   window.setTimeout(() => {
     void leaveQueue(mode).catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
   }, delayMs);
 }
@@ -763,6 +847,140 @@ function getMatchSpawn(playerIds: string[], playerId: string) {
   };
 }
 
+function resetTowerDefenseGame() {
+  towerDefenseGame = {
+    baseHp: BASE_MAX_HP,
+    baseMaxHp: BASE_MAX_HP,
+    wave: 1,
+    enemies: [],
+    spawnTimer: 0,
+    spawnedThisWave: 0,
+    waveBreakTimer: 0,
+    gameOver: false
+  };
+}
+
+function tileCenter(tile: GridPoint) {
+  return {
+    x: GRID_ORIGIN_X + tile.gx * GRID_SIZE + GRID_SIZE / 2,
+    y: GRID_ORIGIN_Y + tile.gy * GRID_SIZE + GRID_SIZE / 2
+  };
+}
+
+function gridTileKey(tile: GridPoint) {
+  return `${tile.gx}:${tile.gy}`;
+}
+
+function currentWaveConfig() {
+  const wave = towerDefenseGame.wave;
+  return {
+    totalEnemies: Math.min(8 + wave * 3, 28),
+    spawnInterval: Math.max(0.45, 1.05 - wave * 0.08)
+  };
+}
+
+function enemyTemplateForWave(wave: number, spawnedIndex: number): EnemyTemplate {
+  if (wave >= 3 && spawnedIndex % 6 === 5) {
+    return ENEMY_TEMPLATES.tank;
+  }
+  if (wave >= 2 && spawnedIndex % 4 === 2) {
+    return ENEMY_TEMPLATES.runner;
+  }
+  return ENEMY_TEMPLATES.grunt;
+}
+
+function spawnEnemy(template: EnemyTemplate) {
+  const spawn = tileCenter(ENEMY_PATH[0]);
+  towerDefenseGame.enemies.push({
+    id: `enemy-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`,
+    kind: template.kind,
+    x: spawn.x,
+    y: spawn.y,
+    hp: template.hp,
+    maxHp: template.hp,
+    speed: template.speed,
+    damage: template.damage,
+    radius: template.radius,
+    color: template.color,
+    pathIndex: 0,
+    progress: 0
+  });
+}
+
+function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
+  if (enemy.pathIndex >= ENEMY_PATH.length - 1) {
+    return true;
+  }
+
+  let remainingDistance = enemy.speed * deltaSeconds;
+  while (remainingDistance > 0 && enemy.pathIndex < ENEMY_PATH.length - 1) {
+    const current = tileCenter(ENEMY_PATH[enemy.pathIndex]);
+    const next = tileCenter(ENEMY_PATH[enemy.pathIndex + 1]);
+    const segmentLength = Math.max(1, Math.hypot(next.x - current.x, next.y - current.y));
+    const distanceOnSegment = enemy.progress * segmentLength;
+    const distanceToNext = segmentLength - distanceOnSegment;
+
+    if (remainingDistance >= distanceToNext) {
+      remainingDistance -= distanceToNext;
+      enemy.pathIndex += 1;
+      enemy.progress = 0;
+      enemy.x = next.x;
+      enemy.y = next.y;
+      continue;
+    }
+
+    enemy.progress += remainingDistance / segmentLength;
+    enemy.x = current.x + (next.x - current.x) * enemy.progress;
+    enemy.y = current.y + (next.y - current.y) * enemy.progress;
+    remainingDistance = 0;
+  }
+
+  return enemy.pathIndex >= ENEMY_PATH.length - 1;
+}
+
+function updateTowerDefenseGame(deltaSeconds: number) {
+  if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver) {
+    return;
+  }
+
+  const waveConfig = currentWaveConfig();
+  if (towerDefenseGame.waveBreakTimer > 0) {
+    towerDefenseGame.waveBreakTimer = Math.max(0, towerDefenseGame.waveBreakTimer - deltaSeconds);
+  } else if (towerDefenseGame.spawnedThisWave < waveConfig.totalEnemies) {
+    towerDefenseGame.spawnTimer -= deltaSeconds;
+    if (towerDefenseGame.spawnTimer <= 0) {
+      spawnEnemy(enemyTemplateForWave(towerDefenseGame.wave, towerDefenseGame.spawnedThisWave));
+      towerDefenseGame.spawnedThisWave += 1;
+      towerDefenseGame.spawnTimer = waveConfig.spawnInterval;
+    }
+  }
+
+  for (let i = towerDefenseGame.enemies.length - 1; i >= 0; i -= 1) {
+    const enemy = towerDefenseGame.enemies[i];
+    if (advanceEnemy(enemy, deltaSeconds)) {
+      towerDefenseGame.baseHp = Math.max(0, towerDefenseGame.baseHp - enemy.damage);
+      towerDefenseGame.enemies.splice(i, 1);
+    }
+  }
+
+  if (towerDefenseGame.baseHp <= 0) {
+    towerDefenseGame.gameOver = true;
+    towerDefenseGame.enemies.length = 0;
+    setStatus("Base destroyed. You lose.", "error");
+    return;
+  }
+
+  const waveComplete =
+    towerDefenseGame.spawnedThisWave >= waveConfig.totalEnemies && towerDefenseGame.enemies.length === 0;
+  if (waveComplete) {
+    towerDefenseGame.wave += 1;
+    towerDefenseGame.spawnedThisWave = 0;
+    towerDefenseGame.spawnTimer = 0;
+    towerDefenseGame.waveBreakTimer = WAVE_BREAK_SECONDS;
+    setStatus(`Wave ${towerDefenseGame.wave} incoming...`, isFirebaseConfigured ? "online" : "offline");
+  }
+}
+
 async function startMatch(mode: QueueMode, playerIds: string[]) {
   if (!localPlayer || localPlayer.scene !== "lobby") {
     return;
@@ -775,12 +993,6 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
 
   const matchId = mode === "single" ? `single-${localPlayer.id}-${Date.now()}` : `duo-${sortedIds.join("-")}`;
   const spawn = getMatchSpawn(sortedIds, localPlayer.id);
-  localMatch = {
-    id: matchId,
-    mode,
-    playerIds: sortedIds,
-    startedAt: Date.now()
-  };
   localPlayer.scene = "towerDefense";
   localPlayer.matchId = matchId;
   localPlayer.x = spawn.x;
@@ -793,6 +1005,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   cameraX = spawn.x;
   cameraY = spawn.y;
   players.set(localPlayer.id, localPlayer);
+  resetTowerDefenseGame();
   activeQueueMode = null;
   queueEnteredAt = 0;
   // Keep filled duo queues visible briefly so both clients can observe the pair
@@ -801,7 +1014,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(
-    mode === "single" ? "Single player placeholder loaded." : "Duo placeholder loaded.",
+    mode === "single" ? "Single player wave started." : "Duo wave started.",
     isFirebaseConfigured ? "online" : "offline"
   );
 
@@ -816,7 +1029,7 @@ async function returnToLobby() {
   }
 
   clearLocalQueues();
-  localMatch = null;
+  resetTowerDefenseGame();
   localPlayer.scene = "lobby";
   localPlayer.matchId = null;
   localPlayer.x = lobbyWorld.width / 2;
@@ -950,13 +1163,13 @@ async function joinLobby(playerName: string) {
       setStatus(`Initial sync failed: ${error.message}`, "error");
     });
     onDisconnect(playerRef(localPlayer.id)).remove().catch((error) => {
-      setStatus(`Disconnect cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Disconnect cleanup failed", error);
     });
     onDisconnect(queueEntryRef("single", localPlayer.id)).remove().catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
     onDisconnect(queueEntryRef("duo", localPlayer.id)).remove().catch((error) => {
-      setStatus(`Queue cleanup failed: ${error.message}`, "error");
+      logBackgroundFailure("Queue cleanup failed", error);
     });
     subscribeToPlayers();
     subscribeToQueue("single");
@@ -1028,68 +1241,118 @@ function drawLobby(camera: { x: number; y: number }) {
   context.strokeRect(left + 18, top + 18, 180, 112);
 }
 
-function drawTowerDefensePlaceholder() {
+function drawEnemy(enemy: Enemy) {
+  context.fillStyle = "rgba(0, 0, 0, 0.28)";
+  context.beginPath();
+  context.ellipse(enemy.x, enemy.y + enemy.radius * 0.7, enemy.radius * 0.9, enemy.radius * 0.36, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.fillStyle = enemy.color;
+  context.strokeStyle = "#111827";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+
+  const barWidth = enemy.radius * 2.2;
+  const barX = enemy.x - barWidth / 2;
+  const barY = enemy.y - enemy.radius - 13;
+  context.fillStyle = "#111827";
+  context.fillRect(barX, barY, barWidth, 5);
+  context.fillStyle = "#86efac";
+  context.fillRect(barX, barY, barWidth * clamp(enemy.hp / enemy.maxHp, 0, 1), 5);
+}
+
+function drawTowerDefenseHud() {
+  const hpRatio = clamp(towerDefenseGame.baseHp / towerDefenseGame.baseMaxHp, 0, 1);
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.fillStyle = "rgba(15, 23, 42, 0.82)";
+  context.fillRect(18, window.innerHeight - 118, 360, 96);
+  context.strokeStyle = "rgba(226, 232, 240, 0.18)";
+  context.strokeRect(18.5, window.innerHeight - 117.5, 359, 95);
+  context.fillStyle = "#f8fafc";
+  context.font = "800 18px system-ui, sans-serif";
+  context.textAlign = "left";
+  context.textBaseline = "alphabetic";
+  context.fillText(`Wave ${towerDefenseGame.wave}`, 38, window.innerHeight - 84);
+  context.font = "700 14px system-ui, sans-serif";
+  context.fillText(
+    `Enemies: ${towerDefenseGame.enemies.length} | Spawned: ${towerDefenseGame.spawnedThisWave}`,
+    38,
+    window.innerHeight - 58
+  );
+  context.fillStyle = "#111827";
+  context.fillRect(38, window.innerHeight - 42, 300, 14);
+  context.fillStyle = hpRatio > 0.35 ? "#22c55e" : "#ef4444";
+  context.fillRect(38, window.innerHeight - 42, 300 * hpRatio, 14);
+  context.strokeStyle = "#e2e8f0";
+  context.strokeRect(38.5, window.innerHeight - 41.5, 299, 13);
+  context.fillStyle = "#f8fafc";
+  context.fillText(`Base HP ${towerDefenseGame.baseHp}/${towerDefenseGame.baseMaxHp}`, 38, window.innerHeight - 48);
+  if (towerDefenseGame.gameOver) {
+    context.fillStyle = "rgba(127, 29, 29, 0.92)";
+    context.fillRect(window.innerWidth / 2 - 210, window.innerHeight / 2 - 70, 420, 140);
+    context.fillStyle = "#fee2e2";
+    context.textAlign = "center";
+    context.font = "900 34px system-ui, sans-serif";
+    context.fillText("YOU LOSE", window.innerWidth / 2, window.innerHeight / 2 - 12);
+    context.font = "16px system-ui, sans-serif";
+    context.fillText("The base HP reached 0. Press Escape to return to the lobby.", window.innerWidth / 2, window.innerHeight / 2 + 26);
+  }
+  context.restore();
+}
+
+function drawTowerDefenseGame() {
   context.fillStyle = "#1f2634";
   context.fillRect(0, 0, towerDefenseWorld.width, towerDefenseWorld.height);
 
-  context.strokeStyle = "rgba(255, 255, 255, 0.07)";
-  context.lineWidth = 1;
-  context.beginPath();
-  for (let x = 0; x <= towerDefenseWorld.width; x += 96) {
-    context.moveTo(x, 0);
-    context.lineTo(x, towerDefenseWorld.height);
+  for (let gy = 0; gy < GRID_ROWS; gy += 1) {
+    for (let gx = 0; gx < GRID_COLUMNS; gx += 1) {
+      const x = GRID_ORIGIN_X + gx * GRID_SIZE;
+      const y = GRID_ORIGIN_Y + gy * GRID_SIZE;
+      const key = gridTileKey({ gx, gy });
+      const isSpawn = gx === ENEMY_PATH[0].gx && gy === ENEMY_PATH[0].gy;
+      context.fillStyle = BASE_TILES.has(key) ? "#8f3434" : isSpawn ? "#356d8f" : PATH_TILES.has(key) ? "#b98b54" : "#24344b";
+      context.fillRect(x + 1, y + 1, GRID_SIZE - 2, GRID_SIZE - 2);
+      context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      context.lineWidth = 1;
+      context.strokeRect(x + 0.5, y + 0.5, GRID_SIZE - 1, GRID_SIZE - 1);
+    }
   }
-  for (let y = 0; y <= towerDefenseWorld.height; y += 96) {
-    context.moveTo(0, y);
-    context.lineTo(towerDefenseWorld.width, y);
+
+  context.strokeStyle = "rgba(255, 244, 202, 0.72)";
+  context.lineWidth = 4;
+  context.beginPath();
+  for (const [index, point] of ENEMY_PATH.entries()) {
+    const center = tileCenter(point);
+    if (index === 0) {
+      context.moveTo(center.x, center.y);
+    } else {
+      context.lineTo(center.x, center.y);
+    }
   }
   context.stroke();
 
-  context.strokeStyle = "#b98b54";
-  context.lineWidth = 58;
-  context.lineCap = "round";
-  context.beginPath();
-  context.moveTo(120, 210);
-  context.bezierCurveTo(520, 210, 430, 560, 850, 560);
-  context.bezierCurveTo(1260, 560, 1180, 920, 1680, 920);
-  context.stroke();
-
-  context.fillStyle = "#536d96";
-  for (const slot of [
-    { x: 520, y: 360 },
-    { x: 780, y: 760 },
-    { x: 1120, y: 360 },
-    { x: 1330, y: 760 }
-  ]) {
-    context.beginPath();
-    context.arc(slot.x, slot.y, 42, 0, Math.PI * 2);
-    context.fill();
-    context.strokeStyle = "#dce7f4";
-    context.lineWidth = 4;
-    context.stroke();
-  }
-
-  context.fillStyle = "#d85757";
-  context.beginPath();
-  drawRoundedRectPath(1520, 820, 180, 180, 24);
-  context.fill();
-
-  context.fillStyle = "#f2ead8";
+  context.fillStyle = "#dbeafe";
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = "900 48px system-ui, sans-serif";
-  context.fillText("Tower Defense Placeholder", towerDefenseWorld.width / 2, 150);
-  context.font = "22px system-ui, sans-serif";
-  context.fillText("The actual waves, towers, enemies, and economy will be added next.", towerDefenseWorld.width / 2, 205);
+  context.font = "900 22px system-ui, sans-serif";
+  context.fillText("SPAWN", tileCenter(ENEMY_PATH[0]).x, tileCenter(ENEMY_PATH[0]).y);
+  context.fillText("BASE", tileCenter({ gx: 15, gy: 6 }).x, tileCenter({ gx: 15, gy: 6 }).y);
 
-  if (localMatch) {
-    context.font = "18px system-ui, sans-serif";
-    context.fillText(
-      `${localMatch.mode === "single" ? "Single player" : "Duo"} match: ${localMatch.playerIds.length} player${localMatch.playerIds.length === 1 ? "" : "s"}`,
-      towerDefenseWorld.width / 2,
-      245
-    );
+  for (const enemy of towerDefenseGame.enemies) {
+    drawEnemy(enemy);
   }
+
+  context.fillStyle = "#f2ead8";
+  context.font = "900 38px system-ui, sans-serif";
+  context.fillText("Tower Defense", towerDefenseWorld.width / 2, 92);
+  context.font = "18px system-ui, sans-serif";
+  context.fillText("Enemies move tile-to-tile along the grid. Towers will be carried and free-placed next.", towerDefenseWorld.width / 2, 128);
+
+  drawTowerDefenseHud();
 }
 
 function drawPlayer(player: Player, isLocal: boolean) {
@@ -1154,7 +1417,7 @@ function draw() {
   );
 
   if (localPlayer?.scene === "towerDefense") {
-    drawTowerDefensePlaceholder();
+    drawTowerDefenseGame();
   } else {
     drawLobby(camera);
   }
@@ -1211,6 +1474,7 @@ function tick(frameAt: number) {
   lastFrameAt = frameAt;
 
   updateLocalPlayer(deltaSeconds);
+  updateTowerDefenseGame(deltaSeconds);
   updateQueueState(frameAt);
   updateRenderedPlayers(deltaSeconds);
   updateCamera(deltaSeconds);

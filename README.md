@@ -2,15 +2,19 @@
 
 WoopWoop is being reworked into a browser-based tower defense game.
 
-The current build is a lobby prototype:
+The current build is an early tower defense prototype:
 
 - Players sign in with Firebase email/password, or use offline mode when Firebase
   config is missing.
 - Players can walk around the main lobby with WASD.
 - The lobby has queue boxes for **Single Player** and **Duos**.
-- Single player starts a placeholder tower defense scene.
+- Single player starts a tower defense test round.
 - Duos start once two players are waiting in the duo queue.
-- The tower defense game itself is currently a placeholder arena.
+- Enemies move tile-to-tile along a grid path and damage the base when they
+  reach the end.
+- The round is lost when base HP reaches 0.
+- Towers are not implemented yet. The next tower phase should use free
+  placement with hitbox overlap checks, not build tiles.
 
 ## What you need from Firebase
 
@@ -39,7 +43,7 @@ Also enable:
 - **Authentication** > **Sign-in method** > **Email/Password**
 - **Realtime Database** with a database URL
 
-For early local testing only, you can use permissive database rules:
+For early local testing only, you can use these lobby rules:
 
 ```json
 {
@@ -49,14 +53,16 @@ For early local testing only, you can use permissive database rules:
         ".read": "auth != null",
         "players": {
           "$uid": {
-            ".write": "auth != null && (auth.uid == $uid || !newData.exists())"
+            ".write": "auth != null && auth.uid == $uid",
+            ".validate": "!newData.exists() || (newData.hasChildren(['name','x','y','facingX','facingY','moving','step','scene','lastSeen']) && newData.child('name').isString() && newData.child('name').val().length <= 18 && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('facingX').isNumber() && newData.child('facingY').isNumber() && newData.child('moving').isBoolean() && newData.child('step').isNumber() && newData.child('scene').isString() && (newData.child('scene').val() == 'lobby' || newData.child('scene').val() == 'towerDefense'))"
           }
         },
         "queues": {
           "$mode": {
+            ".validate": "$mode == 'single' || $mode == 'duo'",
             "$uid": {
               ".write": "auth != null && auth.uid == $uid",
-              ".validate": "$mode == 'single' || $mode == 'duo'"
+              ".validate": "!newData.exists() || (newData.hasChildren(['name','queuedAt']) && newData.child('name').isString() && newData.child('name').val().length <= 18)"
             }
           }
         }
@@ -66,11 +72,16 @@ For early local testing only, you can use permissive database rules:
 }
 ```
 
+These rules intentionally allow deletes (`!newData.exists()`) so the client can
+clean up a player's lobby and queue records when they leave a portal, enter a
+match, or disconnect. If you see `Queue cleanup failed: PERMISSION_DENIED` in an
+older build, update Firebase with the rules above.
+
 ## Controls
 
 - **WASD** - move
 - **Shift** - sprint
-- **Escape** - return from the placeholder tower defense scene to the lobby
+- **Escape** - return from the tower defense round to the lobby
 
 Stand inside the Single Player or Duos queue box to join that queue. Leaving the
 box leaves the queue.
@@ -83,7 +94,7 @@ npm run dev
 ```
 
 Open the local URL in two browser tabs. Sign in with two different accounts, then
-walk both players into the Duos box to start the placeholder duo game.
+walk both players into the Duos box to start the tower defense round.
 
 ## Art assets
 
