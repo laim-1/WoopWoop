@@ -264,6 +264,7 @@ export function createInitialMatchState(now = Date.now()): MatchState {
     spawnedThisWave: 0,
     spawnTimer: 0,
     waveBreakTimer: 0,
+    roundStarted: false,
     nextEnemyId: 1,
     nextTowerId: 1,
     gameOver: false,
@@ -288,6 +289,11 @@ export function applyMatchEvents(state: MatchState, playerStates: Record<string,
       if (playerState) {
         playerState.readyState = event.payload.readyState;
       }
+      continue;
+    }
+    if (event.type === "startRound") {
+      state.roundStarted = true;
+      statuses.push("Wave started.");
       continue;
     }
     if (event.type === "placeTower") {
@@ -325,6 +331,12 @@ export function simulateMatchTick(
 ) {
   hydrateMatchStateCollections(state);
   if (state.gameOver) {
+    state.updatedAt = now;
+    return;
+  }
+
+  if (!state.roundStarted) {
+    state.version += 1;
     state.updatedAt = now;
     return;
   }

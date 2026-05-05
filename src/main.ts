@@ -250,6 +250,10 @@ const TOWER_SHOP_SCREEN_PAD = 12;
 const TOWER_SHOP_INNER_PAD = 14;
 const TOWER_SHOP_TITLE_HEIGHT = 22;
 const TOWER_SHOP_CORNER_RADIUS = 12;
+const START_WAVE_BTN_W = 260;
+const START_WAVE_BTN_H = 52;
+/** Top-centered control (screen space); below browser chrome. */
+const START_WAVE_BTN_TOP = 88;
 
 const queuePads: QueuePad[] = [
   {
@@ -459,8 +463,12 @@ function showGameShell() {
 function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
   sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
-  sceneHelp.textContent = inMatch ? "" : "WASD to move. Stand inside a portal box to queue.";
-  sceneHelp.classList.toggle("is-hidden", inMatch);
+  sceneHelp.textContent = inMatch
+    ? towerDefenseGame.roundStarted
+      ? "Tower shop → pick tower → click the map."
+      : "Tap Start wave (top center). Then tower shop → click map."
+    : "WASD to move. Stand inside a portal box to queue.";
+  sceneHelp.classList.remove("is-hidden");
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
 }
@@ -793,6 +801,7 @@ function resetTowerDefenseGame() {
 function coerceMatchStateFromRemote(raw: MatchState): MatchState {
   const base = createInitialMatchState(typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now());
   const m: MatchState = { ...base, ...raw };
+  m.roundStarted = typeof raw.roundStarted === "boolean" ? raw.roundStarted : false;
   if (typeof raw.spawnTimer !== "number" || !Number.isFinite(raw.spawnTimer)) {
     m.spawnTimer = base.spawnTimer;
   }
@@ -803,6 +812,40 @@ function coerceMatchStateFromRemote(raw: MatchState): MatchState {
   m.towers = firebaseIndexedList<Tower>((raw as { towers?: unknown }).towers);
   m.shots = firebaseIndexedList<TowerShot>((raw as { shots?: unknown }).shots);
   return m;
+}
+
+function startWaveButtonLayout() {
+  return {
+    x: Math.floor(window.innerWidth / 2 - START_WAVE_BTN_W / 2),
+    y: START_WAVE_BTN_TOP,
+    w: START_WAVE_BTN_W,
+    h: START_WAVE_BTN_H,
+  };
+}
+
+function pointerHitsStartWaveButton(px: number, py: number) {
+  const b = startWaveButtonLayout();
+  return px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+}
+
+function requestStartWave() {
+  if (
+    !localPlayer ||
+    localPlayer.scene !== "towerDefense" ||
+    towerDefenseGame.gameOver ||
+    towerDefenseGame.roundStarted
+  ) {
+    return;
+  }
+  if (isFirebaseConfigured && matchSync && localPlayer.matchId) {
+    void matchSync.submitStartRound().catch((networkError: unknown) => {
+      setStatus(`Start failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
+    });
+    return;
+  }
+  towerDefenseGame.roundStarted = true;
+  updateSceneChrome();
+  setStatus("Wave started.", "offline");
 }
 
 function localMatchPlayerState() {
@@ -1157,6 +1200,9 @@ function updateTowerDefenseGame(deltaSeconds: number) {
   if (isFirebaseConfigured && localPlayer.matchId) {
     return;
   }
+  if (!towerDefenseGame.roundStarted) {
+    return;
+  }
 
   const waveConfig = currentWaveConfig();
   if (towerDefenseGame.waveBreakTimer > 0) {
@@ -1234,6 +1280,9 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   cameraY = spawn.y;
   players.set(localPlayer.id, localPlayer);
   resetTowerDefenseGame();
+  if (!isFirebaseConfigured) {
+    towerDefenseGame.roundStarted = true;
+  }
   for (const playerId of sortedIds) {
     towerDefensePlayerState[playerId] = {
       money: STARTING_MONEY,
@@ -1251,7 +1300,11 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   updateSceneChrome();
   updateQueuePanel();
   setStatus(
-    mode === "single" ? "Defend the base — enemies are spawning." : "Coordinate and build — waves are active.",
+    mode === "duo"
+      ? "Tap Start wave when ready (top center)."
+      : isFirebaseConfigured
+        ? "Starting wave…"
+        : "Offline — enemies are spawning.",
     isFirebaseConfigured ? "online" : "offline",
   );
 
@@ -1272,11 +1325,20 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
         }
         towerDefenseGame = coerceMatchStateFromRemote(state);
         towerDefensePlayerState = playerState;
+        updateSceneChrome();
       },
       onStatus: (message) => {
         setStatus(message, message.toLowerCase().includes("lose") ? "error" : "online");
       },
     });
+    if (mode === "single" && isHost) {
+      void matchSync.submitStartRound().catch((networkError: unknown) => {
+        setStatus(
+          `Could not start wave: ${networkError instanceof Error ? networkError.message : "network error"}`,
+          "error",
+        );
+      });
+    }
     await syncLocalPlayer();
   }
 }
@@ -1603,6 +1665,27 @@ function drawTowerDefenseHud() {
   const teammateMoney = teammateId ? towerDefensePlayerState[teammateId]?.money ?? STARTING_MONEY : null;
   context.save();
   context.setTransform(1, 0, 0, 1, 0, 0);
+  if (!towerDefenseGame.gameOver && !towerDefenseGame.roundStarted) {
+    const sb = startWaveButtonLayout();
+    context.fillStyle = "rgba(22, 163, 74, 0.94)";
+    context.strokeStyle = "#bbf7d0";
+    context.lineWidth = 2;
+    context.beginPath();
+    drawRoundedRectPath(sb.x, sb.y, sb.w, sb.h, 14);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.shadowColor = "rgba(0,0,0,0.45)";
+    context.shadowBlur = 12;
+    context.shadowOffsetY = 2;
+    context.fillStyle = "#f0fdf4";
+    context.font = "900 18px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("Start wave", sb.x + sb.w / 2, sb.y + sb.h / 2 + 1);
+    context.shadowBlur = 0;
+    context.shadowOffsetY = 0;
+  }
   context.fillStyle = "rgba(15, 23, 42, 0.82)";
   context.fillRect(18, window.innerHeight - 152, 390, 130);
   context.strokeStyle = "rgba(226, 232, 240, 0.18)";
@@ -1940,6 +2023,11 @@ window.addEventListener("pointermove", (event) => {
 
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || localPlayer?.scene !== "towerDefense") {
+    return;
+  }
+  if (!towerDefenseGame.gameOver && !towerDefenseGame.roundStarted && pointerHitsStartWaveButton(event.clientX, event.clientY)) {
+    requestStartWave();
+    event.preventDefault();
     return;
   }
   const clickedSlot = hotbarSlotFromScreenPoint(event.clientX, event.clientY);

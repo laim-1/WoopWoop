@@ -51,6 +51,7 @@ describe("simulation", () => {
 
   it("tolerates Firebase object-shaped collections when ticking", () => {
     const state = createInitialMatchState();
+    state.roundStarted = true;
     (state as unknown as { enemies: unknown }).enemies = {};
     const playerState = { p1: createInitialPlayerState() };
     simulateMatchTick(state, playerState, 1);
@@ -58,9 +59,20 @@ describe("simulation", () => {
     expect(state.enemies.length).toBeGreaterThan(0);
   });
 
-  it("spawns enemies over time once the match is running", () => {
+  it("does not spawn until roundStarted", () => {
     const state = createInitialMatchState();
     const playerState = { p1: createInitialPlayerState() };
+    simulateMatchTick(state, playerState, 1);
+    expect(state.enemies.length).toBe(0);
+    expect(state.roundStarted).toBe(false);
+  });
+
+  it("spawns enemies after startRound", () => {
+    const state = createInitialMatchState();
+    const playerState = { p1: createInitialPlayerState() };
+    applyMatchEvents(state, playerState, [
+      { id: "sr1", at: Date.now(), playerId: "p1", type: "startRound", payload: {} },
+    ]);
     simulateMatchTick(state, playerState, 0.2);
     expect(state.spawnedThisWave >= 1 || state.enemies.length >= 1).toBe(true);
   });
