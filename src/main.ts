@@ -53,13 +53,6 @@ type QueuePad = {
   color: string;
 };
 
-type MatchInfo = {
-  id: string;
-  mode: QueueMode;
-  playerIds: string[];
-  startedAt: number;
-};
-
 type GridPoint = {
   gx: number;
   gy: number;
@@ -367,7 +360,6 @@ let lastFrameAt = performance.now();
 let lastSyncAt = 0;
 let activeQueueMode: QueueMode | null = null;
 let queueEnteredAt = 0;
-let localMatch: MatchInfo | null = null;
 let animationStarted = false;
 let hasJoinedLobby = false;
 let playersUnsubscribe: Unsubscribe | null = null;
@@ -908,6 +900,8 @@ function spawnEnemy(template: EnemyTemplate) {
     maxHp: template.hp,
     speed: template.speed,
     damage: template.damage,
+    radius: template.radius,
+    color: template.color,
     pathIndex: 0,
     progress: 0
   });
@@ -999,12 +993,6 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
 
   const matchId = mode === "single" ? `single-${localPlayer.id}-${Date.now()}` : `duo-${sortedIds.join("-")}`;
   const spawn = getMatchSpawn(sortedIds, localPlayer.id);
-  localMatch = {
-    id: matchId,
-    mode,
-    playerIds: sortedIds,
-    startedAt: Date.now()
-  };
   localPlayer.scene = "towerDefense";
   localPlayer.matchId = matchId;
   localPlayer.x = spawn.x;
@@ -1041,7 +1029,6 @@ async function returnToLobby() {
   }
 
   clearLocalQueues();
-  localMatch = null;
   resetTowerDefenseGame();
   localPlayer.scene = "lobby";
   localPlayer.matchId = null;
@@ -1325,7 +1312,7 @@ function drawTowerDefenseGame() {
     for (let gx = 0; gx < GRID_COLUMNS; gx += 1) {
       const x = GRID_ORIGIN_X + gx * GRID_SIZE;
       const y = GRID_ORIGIN_Y + gy * GRID_SIZE;
-      const key = gridId(gx, gy);
+      const key = gridTileKey({ gx, gy });
       const isSpawn = gx === ENEMY_PATH[0].gx && gy === ENEMY_PATH[0].gy;
       context.fillStyle = BASE_TILES.has(key) ? "#8f3434" : isSpawn ? "#356d8f" : PATH_TILES.has(key) ? "#b98b54" : "#24344b";
       context.fillRect(x + 1, y + 1, GRID_SIZE - 2, GRID_SIZE - 2);
