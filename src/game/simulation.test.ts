@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyMatchEvents, createInitialMatchState, createInitialPlayerState, simulateMatchTick } from "./simulation";
+import {
+  applyMatchEvents,
+  createInitialMatchState,
+  createInitialPlayerState,
+  firebaseIndexedList,
+  simulateMatchTick,
+} from "./simulation";
 
 describe("simulation", () => {
   it("spends only the placing player's money", () => {
@@ -33,6 +39,25 @@ describe("simulation", () => {
     expect(state.version).toBeGreaterThan(beforeVersion);
   });
 
+  it("firebaseIndexedList maps RTDB keyed objects in key order", () => {
+    const v = firebaseIndexedList<{ id: number }>({
+      "1": { id: 2 },
+      "0": { id: 1 },
+    });
+    expect(v).toHaveLength(2);
+    expect(v[0]?.id).toBe(1);
+    expect(v[1]?.id).toBe(2);
+  });
+
+  it("tolerates Firebase object-shaped collections when ticking", () => {
+    const state = createInitialMatchState();
+    (state as unknown as { enemies: unknown }).enemies = {};
+    const playerState = { p1: createInitialPlayerState() };
+    simulateMatchTick(state, playerState, 1);
+    expect(Array.isArray(state.enemies)).toBe(true);
+    expect(state.enemies.length).toBeGreaterThan(0);
+  });
+
   it("spawns enemies over time once the match is running", () => {
     const state = createInitialMatchState();
     const playerState = { p1: createInitialPlayerState() };
@@ -40,4 +65,3 @@ describe("simulation", () => {
     expect(state.spawnedThisWave >= 1 || state.enemies.length >= 1).toBe(true);
   });
 });
-

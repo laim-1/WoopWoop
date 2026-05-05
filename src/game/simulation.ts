@@ -15,7 +15,40 @@ import {
   WAVE_BREAK_SECONDS,
   gridTileKey,
 } from "./constants";
-import type { Enemy, EnemyTemplate, GridPoint, MatchInputEvent, MatchPlayerState, MatchState, Tower, TowerSpec } from "./types";
+import type {
+  Enemy,
+  EnemyTemplate,
+  GridPoint,
+  MatchInputEvent,
+  MatchPlayerState,
+  MatchState,
+  Tower,
+  TowerShot,
+  TowerSpec,
+} from "./types";
+
+/** RTDB stores arrays as `{ "0": x, "1": y }`. Host sim must use real arrays for `.push`, `.length`, `splice`. */
+export function firebaseIndexedList<T>(value: unknown): T[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, T>;
+    const keys = Object.keys(obj).filter((k) => /^\d+$/.test(k));
+    keys.sort((a, b) => Number(a) - Number(b));
+    return keys.map((k) => obj[k]).filter((item): item is T => item !== undefined && item !== null);
+  }
+  return [];
+}
+
+export function hydrateMatchStateCollections(state: MatchState): void {
+  state.enemies = firebaseIndexedList<Enemy>(state.enemies as unknown);
+  state.towers = firebaseIndexedList<Tower>(state.towers as unknown);
+  state.shots = firebaseIndexedList<TowerShot>(state.shots as unknown);
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -240,6 +273,7 @@ export function createInitialMatchState(now = Date.now()): MatchState {
 }
 
 export function applyMatchEvents(state: MatchState, playerStates: Record<string, MatchPlayerState>, events: MatchInputEvent[]) {
+  hydrateMatchStateCollections(state);
   const statuses: string[] = [];
   for (const event of events) {
     if (event.type === "setSelectedTower") {
@@ -289,6 +323,7 @@ export function simulateMatchTick(
   deltaSeconds: number,
   now = Date.now(),
 ) {
+  hydrateMatchStateCollections(state);
   if (state.gameOver) {
     state.updatedAt = now;
     return;

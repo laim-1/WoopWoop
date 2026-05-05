@@ -1,7 +1,13 @@
 import { onDisconnect, onValue, push, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Database } from "firebase/database";
 import type { MatchInputEvent, MatchMeta, MatchPlayerState, MatchState, QueueMode, TowerType } from "../types";
-import { applyMatchEvents, createInitialMatchState, createInitialPlayerState, simulateMatchTick } from "../simulation";
+import {
+  applyMatchEvents,
+  createInitialMatchState,
+  createInitialPlayerState,
+  hydrateMatchStateCollections,
+  simulateMatchTick,
+} from "../simulation";
 
 type MatchSyncOptions = {
   database: Database;
@@ -92,6 +98,9 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
     }
     hostActive = meta?.hostId === localPlayerId || hostActive;
     latestState = value?.state ?? null;
+    if (latestState) {
+      hydrateMatchStateCollections(latestState);
+    }
     latestPlayerState = value?.playerState ?? {};
     onState(latestState, latestPlayerState);
   });

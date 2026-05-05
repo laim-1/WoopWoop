@@ -3,7 +3,7 @@ import type { Unsubscribe } from "firebase/database";
 import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount } from "./firebase";
 import { BASE_TILES, ENEMY_PATH, ENEMY_TEMPLATES, GRID_COLUMNS, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_ROWS, GRID_SIZE, PATH_TILES, STARTING_MONEY, TOWER_DEFENSE_WORLD, TOWER_ORDER, TOWER_SPECS, WAVE_BREAK_SECONDS, gridTileKey } from "./game/constants";
 import { createMatchSync, ensureMatchRoom } from "./game/net/matchSync";
-import { createInitialMatchState } from "./game/simulation";
+import { createInitialMatchState, firebaseIndexedList } from "./game/simulation";
 import type {
   Enemy,
   EnemyTemplate,
@@ -787,23 +787,6 @@ function getMatchSpawn(playerIds: string[], playerId: string) {
 function resetTowerDefenseGame() {
   towerDefenseGame = createInitialMatchState();
   towerDefensePlayerState = {};
-}
-
-/** Firebase RTDB persists JS arrays as objects with numeric keys; `snapshot.val()` is not Array.isArray. */
-function firebaseIndexedList<T>(value: unknown): T[] {
-  if (value === undefined || value === null) {
-    return [];
-  }
-  if (Array.isArray(value)) {
-    return value as T[];
-  }
-  if (typeof value === "object") {
-    const obj = value as Record<string, T>;
-    const keys = Object.keys(obj).filter((k) => /^\d+$/.test(k));
-    keys.sort((a, b) => Number(a) - Number(b));
-    return keys.map((k) => obj[k]).filter((item): item is T => item !== undefined && item !== null);
-  }
-  return [];
 }
 
 /** RTDB can return partial or bad numbers — normalize so spawning/timers stay valid. */
