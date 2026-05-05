@@ -32,5 +32,15 @@ describe("simulation", () => {
     simulateMatchTick(state, playerState, 0.2);
     expect(state.version).toBeGreaterThan(beforeVersion);
   });
+
+  it("does not spawn enemies until roundStarted", () => {
+    const state = createInitialMatchState();
+    const playerState = { p1: createInitialPlayerState() };
+    simulateMatchTick(state, playerState, 2);
+    expect(state.enemies).toHaveLength(0);
+    state.roundStarted = true;
+    simulateMatchTick(state, playerState, 0.05);
+    expect(state.spawnedThisWave >= 1 || state.enemies.length >= 1).toBe(true);
+  });
 });
 

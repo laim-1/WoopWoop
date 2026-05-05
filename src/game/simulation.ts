@@ -233,6 +233,7 @@ export function createInitialMatchState(now = Date.now()): MatchState {
     waveBreakTimer: 0,
     nextEnemyId: 1,
     nextTowerId: 1,
+    roundStarted: false,
     gameOver: false,
     version: 1,
     updatedAt: now,
@@ -242,6 +243,11 @@ export function createInitialMatchState(now = Date.now()): MatchState {
 export function applyMatchEvents(state: MatchState, playerStates: Record<string, MatchPlayerState>, events: MatchInputEvent[]) {
   const statuses: string[] = [];
   for (const event of events) {
+    if (event.type === "startRound") {
+      state.roundStarted = true;
+      statuses.push("Round started.");
+      continue;
+    }
     if (event.type === "setSelectedTower") {
       const playerState = playerStates[event.playerId];
       if (playerState) {
@@ -295,14 +301,16 @@ export function simulateMatchTick(
   }
 
   const waveConfig = currentWaveConfig(state.wave);
-  if (state.waveBreakTimer > 0) {
-    state.waveBreakTimer = Math.max(0, state.waveBreakTimer - deltaSeconds);
-  } else if (state.spawnedThisWave < waveConfig.totalEnemies) {
-    state.spawnTimer -= deltaSeconds;
-    if (state.spawnTimer <= 0) {
-      spawnEnemy(state, enemyTemplateForWave(state.wave, state.spawnedThisWave));
-      state.spawnedThisWave += 1;
-      state.spawnTimer = waveConfig.spawnInterval;
+  if (state.roundStarted) {
+    if (state.waveBreakTimer > 0) {
+      state.waveBreakTimer = Math.max(0, state.waveBreakTimer - deltaSeconds);
+    } else if (state.spawnedThisWave < waveConfig.totalEnemies) {
+      state.spawnTimer -= deltaSeconds;
+      if (state.spawnTimer <= 0) {
+        spawnEnemy(state, enemyTemplateForWave(state.wave, state.spawnedThisWave));
+        state.spawnedThisWave += 1;
+        state.spawnTimer = waveConfig.spawnInterval;
+      }
     }
   }
 

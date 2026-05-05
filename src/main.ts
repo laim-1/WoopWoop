@@ -216,8 +216,9 @@ const CAMERA_ZOOM = 1.1;
 const CAMERA_FOLLOW_SPEED = 10;
 const SINGLE_PLAYER_START_DELAY_MS = 850;
 const PLAYER_RADIUS = 28;
-const HAND_OFFSET_SIDE = 26;
-const HAND_OFFSET_BACK = -2;
+/** Hands: pure lateral offset from body center (+ facing), no screen-axis bias so they stay centered when rotating. */
+const ARM_SIDE_OFFSET = 23;
+const ARM_FORWARD_OFFSET = -5;
 const HAND_RADIUS = 7;
 
 const lobbyWorld = {
@@ -225,7 +226,10 @@ const lobbyWorld = {
   height: 1600
 };
 
-const TOWER_CARRY_DISTANCE = 22;
+const HOTBAR_SLOT_W = 74;
+const HOTBAR_SLOT_H = 34;
+const HOTBAR_GAP = 5;
+const HOTBAR_RIGHT_PAD = 14;
 
 const queuePads: QueuePad[] = [
   {
@@ -285,7 +289,6 @@ let localMovementInput = false;
 
 let pointerClientX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
 let pointerClientY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
-let hasPointerSample = false;
 
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
@@ -435,8 +438,8 @@ function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
   sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
   sceneHelp.textContent = inMatch
-    ? "Enemies follow the grid path. WASD moves, mouse aims. Escape returns to lobby."
-    : "WASD to move, mouse to aim. Stand inside a portal box to queue.";
+    ? "WASD to move. Choose tower on the right, click the map to place. Start round when ready. Escape returns to lobby."
+    : "WASD to move. Stand inside a portal box to queue.";
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
 }
@@ -571,26 +574,18 @@ function updateLocalPlayer(deltaSeconds: number) {
   localMovementInput = hasInput;
 
   if (hasInput) {
+    const inputLen = Math.hypot(dx, dy);
+    localPlayer.facingX = dx / inputLen;
+    localPlayer.facingY = dy / inputLen;
     localPlayer.step += deltaSeconds * (sprinting ? 9.5 : 6.5);
   } else if (movementSpeed > 2) {
     localPlayer.step = 0;
+    localPlayer.facingX = localVelocityX / movementSpeed;
+    localPlayer.facingY = localVelocityY / movementSpeed;
   } else {
     localVelocityX = 0;
     localVelocityY = 0;
     localPlayer.step = 0;
-  }
-
-  if (hasPointerSample) {
-    const camera = getCameraCenter();
-    const aimX = screenToWorldX(camera.x, pointerClientX);
-    const aimY = screenToWorldY(camera.y, pointerClientY);
-    const lookDx = aimX - localPlayer.x;
-    const lookDy = aimY - localPlayer.y;
-    const lookLen = Math.hypot(lookDx, lookDy);
-    if (lookLen > 1e-4) {
-      localPlayer.facingX = lookDx / lookLen;
-      localPlayer.facingY = lookDy / lookLen;
-    }
   }
 
   const world = activeWorld();
@@ -969,34 +964,67 @@ function selectedTowerSpec() {
   return TOWER_SPECS[selectedTowerType];
 }
 
+function towerDefenseHotbarLayout() {
+  const colX = window.innerWidth - HOTBAR_SLOT_W - HOTBAR_RIGHT_PAD;
+  const totalH = TOWER_ORDER.length * (HOTBAR_SLOT_H + HOTBAR_GAP) - HOTBAR_GAP;
+  const startY = Math.max(96, Math.floor(window.innerHeight / 2 - totalH / 2));
+  return { colX, startY };
+}
+
 function hotbarSlotFromScreenPoint(x: number, y: number) {
-  const hotbarY = window.innerHeight - 50;
-  if (y < hotbarY || y > hotbarY + 24) {
+  const { colX, startY } = towerDefenseHotbarLayout();
+  if (x < colX || x > colX + HOTBAR_SLOT_W) {
     return null;
   }
-
   for (let index = 0; index < TOWER_ORDER.length; index += 1) {
-    const hotbarX = 38 + index * 70;
-    if (x >= hotbarX && x <= hotbarX + 66) {
+    const top = startY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
+    if (y >= top && y <= top + HOTBAR_SLOT_H) {
       return TOWER_ORDER[index];
     }
   }
   return null;
 }
 
-function getCarriedTowerPosition() {
+function startRoundButtonScreenLayout() {
+  const bw = 176;
+  const bh = 40;
+  return {
+    left: window.innerWidth / 2 - bw / 2,
+    top: 10,
+    width: bw,
+    height: bh
+  };
+}
+
+function pointerHitsStartRoundButton(px: number, py: number) {
+  const r = startRoundButtonScreenLayout();
+  return px >= r.left && px <= r.left + r.width && py >= r.top && py <= r.top + r.height;
+}
+
+/** World position under the cursor in tower-defense scene (for placement ghost and builds). */
+function towerCursorWorld() {
   if (!localPlayer || localPlayer.scene !== "towerDefense") {
     return null;
   }
-  const spec = selectedTowerSpec();
-  const facingLength = Math.max(1, Math.hypot(localPlayer.facingX, localPlayer.facingY));
-  const facingX = localPlayer.facingX / facingLength;
-  const facingY = localPlayer.facingY / facingLength;
+  const cam = getCameraCenter();
   return {
-    x: localPlayer.x + facingX * (PLAYER_RADIUS + spec.radius + TOWER_CARRY_DISTANCE),
-    y: localPlayer.y + facingY * (PLAYER_RADIUS + spec.radius + TOWER_CARRY_DISTANCE),
-    spec
+    x: screenToWorldX(cam.x, pointerClientX),
+    y: screenToWorldY(cam.y, pointerClientY)
   };
+}
+
+function requestStartRound() {
+  if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver || towerDefenseGame.roundStarted) {
+    return;
+  }
+  if (isFirebaseConfigured && matchSync) {
+    void matchSync.submitStartRound().catch((networkError: unknown) => {
+      setStatus(`Start round failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
+    });
+    return;
+  }
+  towerDefenseGame.roundStarted = true;
+  setStatus("Round started.", "offline");
 }
 
 function towerOverlapsBlockedTile(x: number, y: number, radius: number) {
@@ -1052,17 +1080,18 @@ function getTowerPlacementError(x: number, y: number, spec: TowerSpec) {
 }
 
 function placeSelectedTower() {
-  const carried = getCarriedTowerPosition();
-  if (!carried) {
+  const pos = towerCursorWorld();
+  if (!pos) {
     return;
   }
-  const error = getTowerPlacementError(carried.x, carried.y, carried.spec);
+  const spec = selectedTowerSpec();
+  const error = getTowerPlacementError(pos.x, pos.y, spec);
   if (error) {
     setStatus(error, "error");
     return;
   }
   if (isFirebaseConfigured && matchSync && localPlayer) {
-    void matchSync.submitPlaceTower(carried.spec.type, carried.x, carried.y).catch((networkError: unknown) => {
+    void matchSync.submitPlaceTower(spec.type, pos.x, pos.y).catch((networkError: unknown) => {
       setStatus(`Place failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
     });
     return;
@@ -1071,17 +1100,17 @@ function placeSelectedTower() {
   if (!playerState) {
     return;
   }
-  playerState.money -= carried.spec.cost;
+  playerState.money -= spec.cost;
   towerDefenseGame.towers.push({
     id: `tower-${towerDefenseGame.nextTowerId}`,
     ownerId: localPlayer?.id ?? OFFLINE_PLAYER_ID,
-    type: carried.spec.type,
-    x: carried.x,
-    y: carried.y,
+    type: spec.type,
+    x: pos.x,
+    y: pos.y,
     cooldown: 0
   });
   towerDefenseGame.nextTowerId += 1;
-  setStatus(`${carried.spec.name} placed.`, isFirebaseConfigured ? "online" : "offline");
+  setStatus(`${spec.name} placed.`, isFirebaseConfigured ? "online" : "offline");
 }
 
 function updateTowerDefenseGame(deltaSeconds: number) {
@@ -1093,14 +1122,16 @@ function updateTowerDefenseGame(deltaSeconds: number) {
   }
 
   const waveConfig = currentWaveConfig();
-  if (towerDefenseGame.waveBreakTimer > 0) {
-    towerDefenseGame.waveBreakTimer = Math.max(0, towerDefenseGame.waveBreakTimer - deltaSeconds);
-  } else if (towerDefenseGame.spawnedThisWave < waveConfig.totalEnemies) {
-    towerDefenseGame.spawnTimer -= deltaSeconds;
-    if (towerDefenseGame.spawnTimer <= 0) {
-      spawnEnemy(enemyTemplateForWave(towerDefenseGame.wave, towerDefenseGame.spawnedThisWave));
-      towerDefenseGame.spawnedThisWave += 1;
-      towerDefenseGame.spawnTimer = waveConfig.spawnInterval;
+  if (towerDefenseGame.roundStarted) {
+    if (towerDefenseGame.waveBreakTimer > 0) {
+      towerDefenseGame.waveBreakTimer = Math.max(0, towerDefenseGame.waveBreakTimer - deltaSeconds);
+    } else if (towerDefenseGame.spawnedThisWave < waveConfig.totalEnemies) {
+      towerDefenseGame.spawnTimer -= deltaSeconds;
+      if (towerDefenseGame.spawnTimer <= 0) {
+        spawnEnemy(enemyTemplateForWave(towerDefenseGame.wave, towerDefenseGame.spawnedThisWave));
+        towerDefenseGame.spawnedThisWave += 1;
+        towerDefenseGame.spawnTimer = waveConfig.spawnInterval;
+      }
     }
   }
 
@@ -1203,7 +1234,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
         if (!state) {
           return;
         }
-        towerDefenseGame = state;
+        towerDefenseGame = { ...state, roundStarted: state.roundStarted ?? false };
         towerDefensePlayerState = playerState;
       },
       onStatus: (message) => {
@@ -1338,7 +1369,6 @@ async function joinLobby(playerName: string) {
   localVelocityX = 0;
   localVelocityY = 0;
   localMovementInput = false;
-  hasPointerSample = false;
   cameraX = localPlayer.x;
   cameraY = localPlayer.y;
   hasJoinedLobby = true;
@@ -1500,28 +1530,29 @@ function drawTowerShots() {
   }
 }
 
-function drawCarriedTowerPreview() {
+function drawTowerCursorPreview() {
   if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver) {
     return;
   }
-  const placement = getCarriedTowerPosition();
-  if (!placement) {
+  const pos = towerCursorWorld();
+  if (!pos) {
     return;
   }
-  const valid = getTowerPlacementError(placement.x, placement.y, placement.spec) === null;
+  const spec = selectedTowerSpec();
+  const valid = getTowerPlacementError(pos.x, pos.y, spec) === null;
 
   context.save();
   context.globalAlpha = valid ? 0.72 : 0.42;
   context.strokeStyle = valid ? "rgba(134, 239, 172, 0.9)" : "rgba(248, 113, 113, 0.95)";
-  context.fillStyle = placement.spec.color;
+  context.fillStyle = spec.color;
   context.lineWidth = 3;
   context.beginPath();
-  context.arc(placement.x, placement.y, placement.spec.radius, 0, Math.PI * 2);
+  context.arc(pos.x, pos.y, spec.radius, 0, Math.PI * 2);
   context.fill();
   context.stroke();
   context.globalAlpha = 0.18;
   context.beginPath();
-  context.arc(placement.x, placement.y, placement.spec.range, 0, Math.PI * 2);
+  context.arc(pos.x, pos.y, spec.range, 0, Math.PI * 2);
   context.fillStyle = valid ? "#86efac" : "#f87171";
   context.fill();
   context.restore();
@@ -1561,19 +1592,35 @@ function drawTowerDefenseHud() {
   context.fillStyle = "#f8fafc";
   context.fillText(`Base HP ${towerDefenseGame.baseHp}/${towerDefenseGame.baseMaxHp}`, 38, window.innerHeight - 82);
 
-  let hotbarX = 38;
-  const hotbarY = window.innerHeight - 50;
+  if (!towerDefenseGame.roundStarted && !towerDefenseGame.gameOver) {
+    const btn = startRoundButtonScreenLayout();
+    context.fillStyle = "rgba(22, 101, 52, 0.92)";
+    context.fillRect(btn.left, btn.top, btn.width, btn.height);
+    context.strokeStyle = "rgba(187, 247, 208, 0.9)";
+    context.lineWidth = 2;
+    context.strokeRect(btn.left + 0.5, btn.top + 0.5, btn.width - 1, btn.height - 1);
+    context.fillStyle = "#ecfdf5";
+    context.font = "800 14px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("Start round", btn.left + btn.width / 2, btn.top + btn.height / 2);
+    context.textAlign = "left";
+    context.textBaseline = "alphabetic";
+  }
+
+  const { colX, startY } = towerDefenseHotbarLayout();
   for (const [index, type] of TOWER_ORDER.entries()) {
     const spec = TOWER_SPECS[type];
     const selected = selectedTowerType === type;
-    context.fillStyle = selected ? "rgba(96, 165, 250, 0.52)" : "rgba(30, 41, 59, 0.85)";
-    context.fillRect(hotbarX, hotbarY, 66, 24);
+    const slotTop = startY + index * (HOTBAR_SLOT_H + HOTBAR_GAP);
+    context.fillStyle = selected ? "rgba(96, 165, 250, 0.52)" : "rgba(30, 41, 59, 0.92)";
+    context.fillRect(colX, slotTop, HOTBAR_SLOT_W, HOTBAR_SLOT_H);
     context.strokeStyle = selected ? "#bfdbfe" : "rgba(226, 232, 240, 0.22)";
-    context.strokeRect(hotbarX + 0.5, hotbarY + 0.5, 65, 23);
+    context.strokeRect(colX + 0.5, slotTop + 0.5, HOTBAR_SLOT_W - 1, HOTBAR_SLOT_H - 1);
     context.fillStyle = localMoney >= spec.cost ? "#f8fafc" : "#fca5a5";
     context.font = "800 10px system-ui, sans-serif";
-    context.fillText(`${index + 1} ${spec.name} $${spec.cost}`, hotbarX + 5, hotbarY + 16);
-    hotbarX += 70;
+    context.fillText(`${index + 1} ${spec.name}`, colX + 6, slotTop + 16);
+    context.fillText(`$${spec.cost}`, colX + 6, slotTop + 28);
   }
 
   if (towerDefenseGame.gameOver) {
@@ -1634,13 +1681,13 @@ function drawTowerDefenseGame() {
     drawTower(tower);
   }
   drawTowerShots();
-  drawCarriedTowerPreview();
+  drawTowerCursorPreview();
 
   context.fillStyle = "#f2ead8";
   context.font = "900 38px system-ui, sans-serif";
   context.fillText("Tower Defense", TOWER_DEFENSE_WORLD.width / 2, 92);
   context.font = "18px system-ui, sans-serif";
-  context.fillText("Carry a selected tower in front of you, then click to place it.", TOWER_DEFENSE_WORLD.width / 2, 128);
+  context.fillText("Pick a tower on the right, hover the map, then click to place.", TOWER_DEFENSE_WORLD.width / 2, 128);
 
   drawTowerDefenseHud();
 }
@@ -1686,8 +1733,8 @@ function drawPlayer(player: Player, isLocal: boolean) {
   for (const side of [-1, 1]) {
     context.beginPath();
     context.arc(
-      player.x + sideX * side * HAND_OFFSET_SIDE + facingX * (HAND_OFFSET_BACK + handSwing * side * 6),
-      player.y + sideY * side * HAND_OFFSET_SIDE + facingY * (HAND_OFFSET_BACK + handSwing * side * 6) - 6,
+      player.x + sideX * side * ARM_SIDE_OFFSET + facingX * (ARM_FORWARD_OFFSET + handSwing * side * 5),
+      player.y + sideY * side * ARM_SIDE_OFFSET + facingY * (ARM_FORWARD_OFFSET + handSwing * side * 5),
       HAND_RADIUS,
       0,
       Math.PI * 2
@@ -1817,7 +1864,7 @@ window.addEventListener("keydown", (event) => {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
     const spec = selectedTowerSpec();
-    setStatus(`Carrying ${spec.name} tower ($${spec.cost}). Click to place.`, isFirebaseConfigured ? "online" : "offline");
+    setStatus(`Selected ${spec.name} ($${spec.cost}). Click the map to place.`, isFirebaseConfigured ? "online" : "offline");
     event.preventDefault();
   } else if (event.code === "Escape" && localPlayer?.scene === "towerDefense") {
     void returnToLobby();
@@ -1835,11 +1882,15 @@ window.addEventListener("pointermove", (event) => {
   }
   pointerClientX = event.clientX;
   pointerClientY = event.clientY;
-  hasPointerSample = true;
 });
 
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || localPlayer?.scene !== "towerDefense") {
+    return;
+  }
+  if (pointerHitsStartRoundButton(event.clientX, event.clientY) && !towerDefenseGame.gameOver && !towerDefenseGame.roundStarted) {
+    requestStartRound();
+    event.preventDefault();
     return;
   }
   const clickedSlot = hotbarSlotFromScreenPoint(event.clientX, event.clientY);
@@ -1849,7 +1900,7 @@ canvas.addEventListener("pointerdown", (event) => {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
     const spec = selectedTowerSpec();
-    setStatus(`Carrying ${spec.name} tower ($${spec.cost}). Click to place.`, isFirebaseConfigured ? "online" : "offline");
+    setStatus(`Selected ${spec.name} ($${spec.cost}). Click the map to place.`, isFirebaseConfigured ? "online" : "offline");
     event.preventDefault();
     return;
   }
