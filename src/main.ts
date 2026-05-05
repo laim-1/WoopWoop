@@ -958,16 +958,7 @@ function getMatchSpawn(playerIds: string[], playerId: string) {
 }
 
 function resetTowerDefenseGame() {
-  towerDefenseGame = {
-    baseHp: BASE_MAX_HP,
-    baseMaxHp: BASE_MAX_HP,
-    wave: 1,
-    enemies: [],
-    spawnTimer: 0,
-    spawnedThisWave: 0,
-    waveBreakTimer: 0,
-    gameOver: false
-  };
+  towerDefenseGame = createTowerDefenseGame();
 }
 
 function tileCenter(tile: GridPoint) {
