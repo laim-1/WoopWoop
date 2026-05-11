@@ -157,6 +157,80 @@ input {
   font-size: 0.875rem;
 }
 
+.build-info {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  width: min(18rem, calc(100vw - 2.5rem));
+  padding: 0.875rem 1rem;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: 1rem;
+  background: rgba(15, 23, 42, 0.86);
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.build-info h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #93c5fd;
+}
+
+.build-info-subject {
+  margin: 0;
+  font-weight: 700;
+  color: #f8fafc;
+  word-wrap: break-word;
+}
+
+.build-info-meta {
+  margin: 0.45rem 0 0;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.build-info-meta span {
+  font-variant-numeric: tabular-nums;
+}
+
+.build-info-dot {
+  color: #64748b;
+}
+
+.build-info-hint {
+  margin: 0.5rem 0 0;
+  color: #64748b;
+  font-size: 0.7rem;
+}
+
+@media (max-width: 720px) {
+  .build-info {
+    top: 0.75rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    font-size: 0.78rem;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .build-info h3 {
+    font-size: 0.66rem;
+  }
+
+  .build-info-hint {
+    display: none;
+  }
+}
+
 #game {
   position: fixed;
   inset: 0;

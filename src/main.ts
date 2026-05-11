@@ -158,6 +158,17 @@ app.innerHTML = `
       <p class="menu-error" id="menu-error" role="alert"></p>
     </section>
 
+    <aside class="build-info" id="build-info" aria-label="Latest update">
+      <h3>Latest update</h3>
+      <p class="build-info-subject" id="build-info-subject"></p>
+      <p class="build-info-meta">
+        <span id="build-info-sha"></span>
+        <span class="build-info-dot">&middot;</span>
+        <span id="build-info-time"></span>
+      </p>
+      <p class="build-info-hint">Don't see your change? Hard-refresh with Ctrl+Shift+R.</p>
+    </aside>
+
     <section class="hud is-hidden" id="game-hud">
       <div>
         <h1 id="scene-title">Main Lobby</h1>
@@ -227,6 +238,45 @@ const queueList = requireElement<HTMLUListElement>("#queue-list");
 const touchJoystick = requireElement<HTMLDivElement>("#touch-joystick");
 const touchJoystickKnob = requireElement<HTMLDivElement>("#touch-joystick-knob");
 const touchSprintButton = requireElement<HTMLButtonElement>("#touch-sprint");
+const buildInfoCard = requireElement<HTMLElement>("#build-info");
+const buildInfoSubject = requireElement<HTMLParagraphElement>("#build-info-subject");
+const buildInfoSha = requireElement<HTMLSpanElement>("#build-info-sha");
+const buildInfoTime = requireElement<HTMLSpanElement>("#build-info-time");
+
+declare const __BUILD_INFO__: {
+  sha: string;
+  subject: string;
+  isoDate: string;
+  builtAt: string;
+};
+
+function relativeTime(isoDate: string) {
+  const then = new Date(isoDate).getTime();
+  if (Number.isNaN(then)) {
+    return "";
+  }
+  const diffSeconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSeconds < 60) return "just now";
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes} min ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hr ago`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
+}
+
+function renderBuildInfo() {
+  buildInfoSubject.textContent = __BUILD_INFO__.subject;
+  buildInfoSha.textContent = __BUILD_INFO__.sha;
+  const stamp = new Date(__BUILD_INFO__.isoDate);
+  const formatted = Number.isNaN(stamp.getTime())
+    ? __BUILD_INFO__.isoDate
+    : stamp.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  buildInfoTime.textContent = `${formatted} (${relativeTime(__BUILD_INFO__.isoDate)})`;
+}
+
+renderBuildInfo();
+window.setInterval(renderBuildInfo, 60_000);
 
 const maybeContext = canvas.getContext("2d");
 
@@ -487,6 +537,7 @@ function setAuthPending(pending: boolean) {
 
 function showGameShell() {
   joinMenu.classList.add("is-hidden");
+  buildInfoCard.classList.add("is-hidden");
   canvas.classList.remove("is-hidden");
   gameHud.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
