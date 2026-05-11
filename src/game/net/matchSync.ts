@@ -61,12 +61,13 @@ export async function ensureMatchRoom(
     createdAt: serverTimestamp(),
   };
 
-  await set(root, {
+  // Multi-path update so each child is evaluated against its own rule.
+  // A single `set` at the match root would be denied because no .write rule
+  // exists at that path (rules don't cascade upward).
+  await update(root, {
     meta,
     state: roomState,
     playerState,
-    presence: {},
-    events: {},
   });
 }
 
