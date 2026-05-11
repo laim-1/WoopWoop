@@ -1,4 +1,4 @@
-import { onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
+import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount } from "./firebase";
 import { BASE_TILES, ENEMY_PATH, ENEMY_TEMPLATES, GRID_COLUMNS, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_ROWS, GRID_SIZE, PATH_TILES, STARTING_MONEY, TOWER_DEFENSE_WORLD, TOWER_ORDER, TOWER_SPECS, WAVE_BREAK_SECONDS, gridTileKey } from "./game/constants";
@@ -1597,6 +1597,35 @@ async function joinLobby(playerName: string) {
     subscribeToPlayers();
     subscribeToQueue("single");
     subscribeToQueue("duo");
+    void cleanupStaleMatches().catch((error) => {
+      logBackgroundFailure("Match cleanup skipped", error);
+    });
+  }
+}
+
+const STALE_MATCH_THRESHOLD_MS = 4 * 60 * 60 * 1000;
+
+async function cleanupStaleMatches() {
+  if (!isFirebaseConfigured) {
+    return;
+  }
+  const snapshot = await get(ref(database, "rooms/matches"));
+  if (!snapshot.exists()) {
+    return;
+  }
+  const rooms = snapshot.val() as Record<string, { meta?: { createdAt?: number } }> | null;
+  if (!rooms) {
+    return;
+  }
+  const cutoff = Date.now() - STALE_MATCH_THRESHOLD_MS;
+  for (const [matchId, room] of Object.entries(rooms)) {
+    const createdAt = room?.meta?.createdAt;
+    if (typeof createdAt !== "number" || createdAt > cutoff) {
+      continue;
+    }
+    await remove(ref(database, `rooms/matches/${matchId}`)).catch((error) => {
+      logBackgroundFailure(`Stale match ${matchId} cleanup`, error);
+    });
   }
 }
 

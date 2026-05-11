@@ -82,8 +82,10 @@ the game status line, confirm the live rules match the file below.
         }
       },
       "matches": {
+        ".read": "auth != null",
         "$matchId": {
           ".read": "auth != null",
+          ".write": "auth != null && !newData.exists() && data.exists() && (data.child('meta/hostId').val() === auth.uid || (data.child('meta/createdAt').val() != null && now > data.child('meta/createdAt').val() + 14400000))",
           "meta": {
             ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid)"
           },
