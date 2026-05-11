@@ -1316,7 +1316,14 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
     matchSync = null;
     if (mode === "duo") {
       if (isHost) {
-        await ensureMatchRoom(database, matchId, hostId, sortedIds);
+        try {
+          await ensureMatchRoom(database, matchId, hostId, sortedIds);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "network error";
+          setStatus(`Match create failed: ${message}`, "error");
+          console.error("ensureMatchRoom failed", error);
+          return;
+        }
       }
       matchSync = createMatchSync(matchId, {
         database,

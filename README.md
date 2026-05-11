@@ -88,10 +88,10 @@ the game status line, confirm the live rules match the file below.
             ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid)"
           },
           "state": {
-            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+            ".write": "auth != null && newData.parent().child('meta/hostId').val() === auth.uid"
           },
           "playerState": {
-            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+            ".write": "auth != null && newData.parent().child('meta/hostId').val() === auth.uid"
           },
           "events": {
             "$eventId": {
