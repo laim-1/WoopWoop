@@ -181,35 +181,37 @@ function makeForest(): MapDefinition {
   const decorations: Decoration[] = [];
   const trunkColors = ["#3b2417", "#4a2e1a", "#2f1d12"];
   const canopyColors = ["#2f6f3a", "#3b8047", "#26653a", "#447d4a"];
-  for (const tile of freeTiles(geom, blocked)) {
+  const empties = shuffleSeeded(freeTiles(geom, blocked), r);
+  const pick = empties.slice(0, Math.floor(empties.length * 0.22));
+  for (const tile of pick) {
     const c = tileCenter(geom, tile.gx, tile.gy);
-    const offsetX = (r() - 0.5) * geom.tileSize * 0.35;
-    const offsetY = (r() - 0.5) * geom.tileSize * 0.35;
+    const offsetX = (r() - 0.5) * geom.tileSize * 0.25;
+    const offsetY = (r() - 0.5) * geom.tileSize * 0.25;
     const roll = r();
-    if (roll < 0.36) {
+    if (roll < 0.6) {
       decorations.push({
         kind: "tree",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 24 + r() * 10,
+        size: 60 + r() * 28,
         trunk: trunkColors[Math.floor(r() * trunkColors.length)],
         canopy: canopyColors[Math.floor(r() * canopyColors.length)],
         shade: "rgba(8, 22, 14, 0.45)",
       });
-    } else if (roll < 0.58) {
+    } else if (roll < 0.85) {
       decorations.push({
         kind: "bush",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 14 + r() * 8,
+        size: 32 + r() * 18,
         color: "#3a7148",
       });
-    } else if (roll < 0.72) {
+    } else {
       decorations.push({
         kind: "rock",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 12 + r() * 8,
+        size: 24 + r() * 14,
         color: "#475569",
       });
     }
@@ -258,43 +260,45 @@ function makeDesert(): MapDefinition {
   const blocked = new Set<string>([...enemyPath.map(tileKey), ...baseTiles.map(tileKey)]);
   const r = rng(0xde5e_2701);
   const decorations: Decoration[] = [];
-  for (let i = 0; i < 14; i += 1) {
+  for (let i = 0; i < 10; i += 1) {
     decorations.push({
       kind: "dune",
       x: r() * 1800,
       y: 200 + r() * 900,
-      rx: 110 + r() * 110,
-      ry: 36 + r() * 22,
+      rx: 170 + r() * 140,
+      ry: 50 + r() * 32,
       color: i % 2 === 0 ? "rgba(244, 196, 124, 0.4)" : "rgba(212, 158, 96, 0.45)",
     });
   }
-  for (const tile of freeTiles(geom, blocked)) {
+  const empties = shuffleSeeded(freeTiles(geom, blocked), r);
+  const pick = empties.slice(0, Math.floor(empties.length * 0.18));
+  for (const tile of pick) {
     const c = tileCenter(geom, tile.gx, tile.gy);
-    const offsetX = (r() - 0.5) * geom.tileSize * 0.4;
-    const offsetY = (r() - 0.5) * geom.tileSize * 0.4;
+    const offsetX = (r() - 0.5) * geom.tileSize * 0.25;
+    const offsetY = (r() - 0.5) * geom.tileSize * 0.25;
     const roll = r();
-    if (roll < 0.3) {
+    if (roll < 0.55) {
       decorations.push({
         kind: "cactus",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 20 + r() * 10,
-        arms: r() < 0.5 ? 2 : r() < 0.5 ? 1 : 3,
+        size: 44 + r() * 18,
+        arms: r() < 0.5 ? 2 : r() < 0.75 ? 1 : 3,
       });
-    } else if (roll < 0.46) {
+    } else if (roll < 0.85) {
       decorations.push({
         kind: "rock",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 14 + r() * 8,
+        size: 28 + r() * 18,
         color: "#7a4a22",
       });
-    } else if (roll < 0.52) {
+    } else {
       decorations.push({
         kind: "skull",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 14 + r() * 4,
+        size: 22 + r() * 8,
       });
     }
   }
@@ -341,45 +345,47 @@ function makeVolcano(): MapDefinition {
   const blocked = new Set<string>([...enemyPath.map(tileKey), ...baseTiles.map(tileKey)]);
   const r = rng(0xfa11_b00b);
   const decorations: Decoration[] = [];
-  for (const tile of freeTiles(geom, blocked)) {
+  const empties = shuffleSeeded(freeTiles(geom, blocked), r);
+  const pick = empties.slice(0, Math.floor(empties.length * 0.2));
+  for (const tile of pick) {
     const c = tileCenter(geom, tile.gx, tile.gy);
-    const offsetX = (r() - 0.5) * geom.tileSize * 0.45;
-    const offsetY = (r() - 0.5) * geom.tileSize * 0.45;
+    const offsetX = (r() - 0.5) * geom.tileSize * 0.3;
+    const offsetY = (r() - 0.5) * geom.tileSize * 0.3;
     const roll = r();
-    if (roll < 0.16) {
+    if (roll < 0.3) {
       decorations.push({
         kind: "lava",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 22 + r() * 12,
+        size: 52 + r() * 26,
       });
-    } else if (roll < 0.3) {
+    } else if (roll < 0.55) {
       decorations.push({
         kind: "deadTree",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 22 + r() * 10,
+        size: 50 + r() * 22,
       });
-    } else if (roll < 0.42) {
+    } else if (roll < 0.72) {
       decorations.push({
         kind: "vent",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 16 + r() * 8,
+        size: 32 + r() * 16,
       });
-    } else if (roll < 0.5) {
+    } else if (roll < 0.82) {
       decorations.push({
         kind: "skull",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 12 + r() * 4,
+        size: 22 + r() * 8,
       });
-    } else if (roll < 0.66) {
+    } else {
       decorations.push({
         kind: "rock",
         x: c.x + offsetX,
         y: c.y + offsetY,
-        size: 12 + r() * 10,
+        size: 26 + r() * 16,
         color: r() < 0.5 ? "#231613" : "#3a1a14",
       });
     }
@@ -438,25 +444,26 @@ function makeMoon(): MapDefinition {
     });
   }
   const craterTilesShuffled = shuffleSeeded(freeTiles(geom, blocked), r);
-  const craterCount = Math.min(craterTilesShuffled.length, 22);
+  const craterCount = Math.min(craterTilesShuffled.length, 8);
   for (let i = 0; i < craterCount; i += 1) {
     const tile = craterTilesShuffled[i];
     const c = tileCenter(geom, tile.gx, tile.gy);
     decorations.push({
       kind: "crater",
-      x: c.x + (r() - 0.5) * geom.tileSize * 0.25,
-      y: c.y + (r() - 0.5) * geom.tileSize * 0.25,
-      size: 28 + r() * 16,
+      x: c.x + (r() - 0.5) * geom.tileSize * 0.2,
+      y: c.y + (r() - 0.5) * geom.tileSize * 0.2,
+      size: 58 + r() * 30,
     });
   }
-  for (const tile of craterTilesShuffled.slice(craterCount)) {
+  const rockCandidates = craterTilesShuffled.slice(craterCount);
+  const rockPick = rockCandidates.slice(0, Math.floor(rockCandidates.length * 0.1));
+  for (const tile of rockPick) {
     const c = tileCenter(geom, tile.gx, tile.gy);
-    if (r() < 0.5) continue;
     decorations.push({
       kind: "rock",
-      x: c.x + (r() - 0.5) * geom.tileSize * 0.5,
-      y: c.y + (r() - 0.5) * geom.tileSize * 0.5,
-      size: 10 + r() * 12,
+      x: c.x + (r() - 0.5) * geom.tileSize * 0.3,
+      y: c.y + (r() - 0.5) * geom.tileSize * 0.3,
+      size: 24 + r() * 16,
       color: r() < 0.5 ? "#586275" : "#6b758a",
     });
   }
@@ -515,42 +522,56 @@ function makeCity(): MapDefinition {
     { body: "#2f4030", trim: "#476749", window: "#bef264" },
     { body: "#43332a", trim: "#604636", window: "#fcd34d" },
   ];
-  const empties = shuffleSeeded(freeTiles(geom, blocked), r);
-  for (const tile of empties) {
-    const tx = geom.originX + tile.gx * geom.tileSize;
-    const ty = geom.originY + tile.gy * geom.tileSize;
-    const pickRoll = r();
-    if (pickRoll < 0.05) {
-      decorations.push({
-        kind: "streetLight",
-        x: tx + geom.tileSize / 2,
-        y: ty + geom.tileSize / 2,
-      });
-      continue;
+  const used = new Set<string>(blocked);
+  const buildingShapes: [number, number][] = [
+    [2, 2],
+    [2, 2],
+    [2, 2],
+    [3, 2],
+    [2, 3],
+    [2, 1],
+    [1, 2],
+  ];
+  const candidates: { gx: number; gy: number; w: number; h: number }[] = [];
+  for (let gy = 0; gy < geom.gridRows; gy += 1) {
+    for (let gx = 0; gx < geom.gridColumns; gx += 1) {
+      for (const [w, h] of buildingShapes) {
+        if (gx + w <= geom.gridColumns && gy + h <= geom.gridRows) {
+          candidates.push({ gx, gy, w, h });
+        }
+      }
     }
-    if (pickRoll < 0.1) {
-      const horizontal = r() < 0.6;
-      decorations.push({
-        kind: "car",
-        x: tx + geom.tileSize / 2 - (horizontal ? 28 : 14),
-        y: ty + geom.tileSize / 2 - (horizontal ? 14 : 28),
-        w: horizontal ? 56 : 28,
-        h: horizontal ? 28 : 56,
-        body: ["#dc2626", "#f59e0b", "#0ea5e9", "#a3e635", "#f472b6", "#94a3b8"][Math.floor(r() * 6)],
-        horizontal,
-      });
-      continue;
+  }
+  const shuffled = shuffleSeeded(candidates, r);
+  const targetBuildings = 26;
+  let placed = 0;
+  for (const cand of shuffled) {
+    if (placed >= targetBuildings) break;
+    let fits = true;
+    for (let dy = 0; dy < cand.h && fits; dy += 1) {
+      for (let dx = 0; dx < cand.w; dx += 1) {
+        if (used.has(`${cand.gx + dx}:${cand.gy + dy}`)) {
+          fits = false;
+          break;
+        }
+      }
     }
-    const inset = 6 + r() * 4;
-    const w = geom.tileSize - inset * 2;
-    const h = geom.tileSize - inset * 2;
+    if (!fits) continue;
+    for (let dy = 0; dy < cand.h; dy += 1) {
+      for (let dx = 0; dx < cand.w; dx += 1) {
+        used.add(`${cand.gx + dx}:${cand.gy + dy}`);
+      }
+    }
+    const inset = 10 + r() * 6;
+    const w = cand.w * geom.tileSize - inset * 2;
+    const h = cand.h * geom.tileSize - inset * 2;
     const pal = buildingPalette[Math.floor(r() * buildingPalette.length)];
-    const cols = 2 + Math.floor(r() * 3);
-    const rows = 3 + Math.floor(r() * 3);
+    const cols = Math.max(2, Math.floor(w / 32));
+    const rows = Math.max(3, Math.floor(h / 28));
     decorations.push({
       kind: "building",
-      x: tx + inset,
-      y: ty + inset,
+      x: geom.originX + cand.gx * geom.tileSize + inset,
+      y: geom.originY + cand.gy * geom.tileSize + inset,
       w,
       h,
       body: pal.body,
@@ -559,6 +580,36 @@ function makeCity(): MapDefinition {
       cols,
       rows,
     });
+    placed += 1;
+  }
+  const open: GridPoint[] = [];
+  for (let gy = 0; gy < geom.gridRows; gy += 1) {
+    for (let gx = 0; gx < geom.gridColumns; gx += 1) {
+      if (!used.has(`${gx}:${gy}`)) open.push({ gx, gy });
+    }
+  }
+  const decoTiles = shuffleSeeded(open, r).slice(0, Math.floor(open.length * 0.18));
+  for (const tile of decoTiles) {
+    const tx = geom.originX + tile.gx * geom.tileSize;
+    const ty = geom.originY + tile.gy * geom.tileSize;
+    if (r() < 0.55) {
+      decorations.push({
+        kind: "streetLight",
+        x: tx + geom.tileSize / 2,
+        y: ty + geom.tileSize / 2,
+      });
+    } else {
+      const horizontal = r() < 0.6;
+      decorations.push({
+        kind: "car",
+        x: tx + geom.tileSize / 2 - (horizontal ? 40 : 20),
+        y: ty + geom.tileSize / 2 - (horizontal ? 20 : 40),
+        w: horizontal ? 80 : 40,
+        h: horizontal ? 40 : 80,
+        body: ["#dc2626", "#f59e0b", "#0ea5e9", "#a3e635", "#f472b6", "#94a3b8"][Math.floor(r() * 6)],
+        horizontal,
+      });
+    }
   }
   return finalize({
     id: "city",
@@ -596,16 +647,16 @@ function finalize(mb: Blueprint): MapDefinition {
   const elevatorFootprints: RectShape[] = [];
   for (const d of mb.decorations) {
     if (d.kind === "tree") {
-      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.78 });
+      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.5 });
     } else if (d.kind === "deadTree") {
-      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.55 });
+      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.32 });
     } else if (d.kind === "cactus") {
-      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.6 });
+      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.45 });
     } else if (d.kind === "lava") {
-      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.9 });
+      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.88 });
     } else if (d.kind === "crater") {
-      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size });
-      lineBlockers.push({ kind: "circle", x: d.x, y: d.y, r: d.size });
+      solidShapes.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.92 });
+      lineBlockers.push({ kind: "circle", x: d.x, y: d.y, r: d.size * 0.85 });
     } else if (d.kind === "building") {
       const rect: RectShape = { kind: "rect", x: d.x, y: d.y, w: d.w, h: d.h };
       lineBlockers.push(rect);
