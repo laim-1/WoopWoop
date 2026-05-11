@@ -175,6 +175,20 @@ app.innerHTML = `
     </aside>
 
     <canvas class="is-hidden" id="game" width="960" height="640" aria-label="Tower defense lobby canvas"></canvas>
+
+    <div class="touch-joystick is-hidden" id="touch-joystick" aria-hidden="true">
+      <div class="touch-joystick-base">
+        <div class="touch-joystick-knob" id="touch-joystick-knob"></div>
+      </div>
+    </div>
+    <button class="touch-sprint is-hidden" id="touch-sprint" type="button" aria-label="Sprint">Run</button>
+
+    <div class="orientation-lock" id="orientation-lock" role="alertdialog" aria-labelledby="orientation-lock-title">
+      <div class="orientation-lock-card">
+        <h2 id="orientation-lock-title">Rotate your phone</h2>
+        <p>WoopWoop is portrait-only on phones. Turn your device upright to keep playing.</p>
+      </div>
+    </div>
   </main>
 `;
 
@@ -210,6 +224,9 @@ const lobbyPanel = requireElement<HTMLElement>("#lobby-panel");
 const playerCount = requireElement<HTMLParagraphElement>("#player-count");
 const queueStatus = requireElement<HTMLParagraphElement>("#queue-status");
 const queueList = requireElement<HTMLUListElement>("#queue-list");
+const touchJoystick = requireElement<HTMLDivElement>("#touch-joystick");
+const touchJoystickKnob = requireElement<HTMLDivElement>("#touch-joystick-knob");
+const touchSprintButton = requireElement<HTMLButtonElement>("#touch-sprint");
 
 const maybeContext = canvas.getContext("2d");
 
@@ -315,6 +332,16 @@ let pointerClientX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
 let pointerClientY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
 /** Placement ghost / map clicks only after picking a tower in the shop (click or digit). */
 let towerShopArmed = false;
+/** Normalized [-1, 1] joystick output; zero when no touch is active. */
+let touchInputX = 0;
+let touchInputY = 0;
+let touchSprintActive = false;
+let activeJoystickPointerId: number | null = null;
+let joystickCenterX = 0;
+let joystickCenterY = 0;
+const JOYSTICK_RADIUS_PX = 50;
+const JOYSTICK_DEADZONE_PX = 8;
+const isTouchDevice = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
 function resizeCanvasToViewport() {
   canvas.width = window.innerWidth;
@@ -463,6 +490,10 @@ function showGameShell() {
   canvas.classList.remove("is-hidden");
   gameHud.classList.remove("is-hidden");
   lobbyPanel.classList.remove("is-hidden");
+  if (isTouchDevice) {
+    touchJoystick.classList.remove("is-hidden");
+    touchSprintButton.classList.remove("is-hidden");
+  }
 }
 
 function updateSceneChrome() {
@@ -581,8 +612,13 @@ function updateLocalPlayer(deltaSeconds: number) {
   if (keys.has("KeyA")) dx -= 1;
   if (keys.has("KeyD")) dx += 1;
 
+  if (touchInputX !== 0 || touchInputY !== 0) {
+    dx += touchInputX;
+    dy += touchInputY;
+  }
+
   const hasInput = dx !== 0 || dy !== 0;
-  const sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight");
+  const sprinting = keys.has("ShiftLeft") || keys.has("ShiftRight") || touchSprintActive;
   const speed = sprinting ? RUN_SPEED : WALK_SPEED;
   let targetVelocityX = 0;
   let targetVelocityY = 0;
@@ -2026,10 +2062,92 @@ window.addEventListener("pointermove", (event) => {
   pointerClientY = event.clientY;
 });
 
+function updateJoystickFromClient(clientX: number, clientY: number) {
+  let dx = clientX - joystickCenterX;
+  let dy = clientY - joystickCenterY;
+  const distance = Math.hypot(dx, dy);
+  if (distance > JOYSTICK_RADIUS_PX) {
+    dx = (dx / distance) * JOYSTICK_RADIUS_PX;
+    dy = (dy / distance) * JOYSTICK_RADIUS_PX;
+  }
+  touchJoystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  if (Math.hypot(dx, dy) < JOYSTICK_DEADZONE_PX) {
+    touchInputX = 0;
+    touchInputY = 0;
+  } else {
+    touchInputX = dx / JOYSTICK_RADIUS_PX;
+    touchInputY = dy / JOYSTICK_RADIUS_PX;
+  }
+}
+
+function resetJoystick() {
+  activeJoystickPointerId = null;
+  touchInputX = 0;
+  touchInputY = 0;
+  touchJoystickKnob.style.transform = "translate(0px, 0px)";
+}
+
+touchJoystick.addEventListener("pointerdown", (event) => {
+  if (activeJoystickPointerId !== null) {
+    return;
+  }
+  event.preventDefault();
+  const rect = touchJoystick.getBoundingClientRect();
+  joystickCenterX = rect.left + rect.width / 2;
+  joystickCenterY = rect.top + rect.height / 2;
+  activeJoystickPointerId = event.pointerId;
+  touchJoystick.setPointerCapture(event.pointerId);
+  updateJoystickFromClient(event.clientX, event.clientY);
+});
+
+touchJoystick.addEventListener("pointermove", (event) => {
+  if (event.pointerId !== activeJoystickPointerId) {
+    return;
+  }
+  event.preventDefault();
+  updateJoystickFromClient(event.clientX, event.clientY);
+});
+
+const endJoystick = (event: PointerEvent) => {
+  if (event.pointerId !== activeJoystickPointerId) {
+    return;
+  }
+  event.preventDefault();
+  resetJoystick();
+};
+touchJoystick.addEventListener("pointerup", endJoystick);
+touchJoystick.addEventListener("pointercancel", endJoystick);
+touchJoystick.addEventListener("pointerleave", (event) => {
+  if (event.pointerId === activeJoystickPointerId) {
+    resetJoystick();
+  }
+});
+
+touchSprintButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  touchSprintActive = true;
+  touchSprintButton.classList.add("is-active");
+  touchSprintButton.setPointerCapture(event.pointerId);
+});
+
+const releaseSprint = (event: PointerEvent) => {
+  event.preventDefault();
+  touchSprintActive = false;
+  touchSprintButton.classList.remove("is-active");
+};
+touchSprintButton.addEventListener("pointerup", releaseSprint);
+touchSprintButton.addEventListener("pointercancel", releaseSprint);
+touchSprintButton.addEventListener("pointerleave", () => {
+  touchSprintActive = false;
+  touchSprintButton.classList.remove("is-active");
+});
+
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || localPlayer?.scene !== "towerDefense") {
     return;
   }
+  pointerClientX = event.clientX;
+  pointerClientY = event.clientY;
   if (!towerDefenseGame.gameOver && !towerDefenseGame.roundStarted && pointerHitsStartWaveButton(event.clientX, event.clientY)) {
     requestStartWave();
     event.preventDefault();

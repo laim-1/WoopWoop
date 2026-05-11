@@ -298,3 +298,121 @@ input {
     bottom: 0.75rem;
   }
 }
+
+.touch-joystick {
+  position: fixed;
+  bottom: 28px;
+  left: 28px;
+  width: 132px;
+  height: 132px;
+  z-index: 3;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-joystick-base {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.55);
+  border: 2px solid rgba(226, 232, 240, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+}
+
+.touch-joystick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 60px;
+  height: 60px;
+  margin-left: -30px;
+  margin-top: -30px;
+  border-radius: 50%;
+  background: rgba(96, 165, 250, 0.9);
+  border: 2px solid #f8fafc;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  transform: translate(0px, 0px);
+  transition: transform 0.06s linear;
+}
+
+.touch-sprint {
+  position: fixed;
+  bottom: 48px;
+  right: 28px;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  border: 2px solid #f8fafc;
+  background: rgba(245, 158, 11, 0.88);
+  color: #111827;
+  font-weight: 900;
+  font-size: 1.1rem;
+  z-index: 3;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.touch-sprint.is-active {
+  background: rgba(252, 211, 77, 1);
+  transform: scale(0.95);
+}
+
+.touch-joystick,
+.touch-sprint {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .touch-joystick:not(.is-hidden),
+  .touch-sprint:not(.is-hidden) {
+    display: block;
+  }
+}
+
+.orientation-lock {
+  display: none;
+}
+
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  .orientation-lock {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: #0f172a;
+    color: #f2ead8;
+    text-align: center;
+  }
+
+  .touch-joystick,
+  .touch-sprint {
+    display: none !important;
+  }
+}
+
+.orientation-lock-card {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 28rem;
+}
+
+.orientation-lock-card h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.orientation-lock-card p {
+  margin: 0;
+  color: #cbd5e1;
+}
