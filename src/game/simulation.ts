@@ -1,20 +1,21 @@
 import {
   BASE_MAX_HP,
-  BASE_TILES,
-  ENEMY_PATH,
   ENEMY_TEMPLATES,
-  GRID_COLUMNS,
-  GRID_ORIGIN_X,
-  GRID_ORIGIN_Y,
-  GRID_ROWS,
-  GRID_SIZE,
-  PATH_TILES,
   STARTING_MONEY,
-  TOWER_DEFENSE_WORLD,
   TOWER_SPECS,
   WAVE_BREAK_SECONDS,
   gridTileKey,
 } from "./constants";
+import {
+  DEFAULT_MAP_ID,
+  getMap,
+  rectContainsCircle,
+  rectIntersectsCircle,
+  segmentIntersectsCircle,
+  segmentIntersectsRect,
+  tileCenterOf,
+  type MapDefinition,
+} from "./maps";
 import type {
   Enemy,
   EnemyTemplate,
@@ -23,6 +24,7 @@ import type {
   MatchPlayerState,
   MatchState,
   Tower,
+  TowerLayer,
   TowerShot,
   TowerSpec,
 } from "./types";
@@ -52,13 +54,6 @@ export function hydrateMatchStateCollections(state: MatchState): void {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
-}
-
-function tileCenter(tile: GridPoint) {
-  return {
-    x: GRID_ORIGIN_X + tile.gx * GRID_SIZE + GRID_SIZE / 2,
-    y: GRID_ORIGIN_Y + tile.gy * GRID_SIZE + GRID_SIZE / 2,
-  };
 }
 
 function currentWaveConfig(wave: number) {
@@ -103,6 +98,22 @@ function applySplashDamage(state: MatchState, target: Enemy, spec: TowerSpec, pl
   }
 }
 
+function towerSightBlocked(map: MapDefinition, tower: Tower, target: Enemy) {
+  if ((tower.layer ?? "ground") === "elevated") {
+    return false;
+  }
+  for (const shape of map.lineBlockers) {
+    if (shape.kind === "rect") {
+      if (segmentIntersectsRect(tower.x, tower.y, target.x, target.y, shape)) {
+        return true;
+      }
+    } else if (segmentIntersectsCircle(tower.x, tower.y, target.x, target.y, shape.x, shape.y, shape.r)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function fireTower(state: MatchState, tower: Tower, spec: TowerSpec, target: Enemy, ownerState: MatchPlayerState) {
   tower.cooldown = 1 / spec.fireRate;
   state.shots.push({
@@ -126,11 +137,14 @@ function fireTower(state: MatchState, tower: Tower, spec: TowerSpec, target: Ene
   }
 }
 
-function findTowerTarget(state: MatchState, tower: Tower, spec: TowerSpec) {
+function findTowerTarget(map: MapDefinition, state: MatchState, tower: Tower, spec: TowerSpec) {
   let best: Enemy | null = null;
   let bestProgress = -1;
   for (const enemy of state.enemies) {
     if (enemy.hp <= 0 || distanceBetween(tower, enemy) > spec.range) {
+      continue;
+    }
+    if (towerSightBlocked(map, tower, enemy)) {
       continue;
     }
     const progressScore = enemy.pathIndex + enemy.progress;
@@ -142,7 +156,7 @@ function findTowerTarget(state: MatchState, tower: Tower, spec: TowerSpec) {
   return best;
 }
 
-function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
+function advanceEnemy(map: MapDefinition, enemy: Enemy, deltaSeconds: number) {
   if (enemy.slowTimer > 0) {
     enemy.slowTimer = Math.max(0, enemy.slowTimer - deltaSeconds);
     if (enemy.slowTimer <= 0) {
@@ -150,14 +164,14 @@ function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
     }
   }
 
-  if (enemy.pathIndex >= ENEMY_PATH.length - 1) {
+  if (enemy.pathIndex >= map.enemyPath.length - 1) {
     return true;
   }
 
   let remainingDistance = enemy.speed * enemy.slowMultiplier * deltaSeconds;
-  while (remainingDistance > 0 && enemy.pathIndex < ENEMY_PATH.length - 1) {
-    const current = tileCenter(ENEMY_PATH[enemy.pathIndex]);
-    const next = tileCenter(ENEMY_PATH[enemy.pathIndex + 1]);
+  while (remainingDistance > 0 && enemy.pathIndex < map.enemyPath.length - 1) {
+    const current = tileCenterOf(map, map.enemyPath[enemy.pathIndex].gx, map.enemyPath[enemy.pathIndex].gy);
+    const next = tileCenterOf(map, map.enemyPath[enemy.pathIndex + 1].gx, map.enemyPath[enemy.pathIndex + 1].gy);
     const segmentLength = Math.max(1, Math.hypot(next.x - current.x, next.y - current.y));
     const distanceOnSegment = enemy.progress * segmentLength;
     const distanceToNext = segmentLength - distanceOnSegment;
@@ -177,20 +191,20 @@ function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
     remainingDistance = 0;
   }
 
-  return enemy.pathIndex >= ENEMY_PATH.length - 1;
+  return enemy.pathIndex >= map.enemyPath.length - 1;
 }
 
-function towerOverlapsBlockedTile(x: number, y: number, radius: number) {
-  for (let gy = 0; gy < GRID_ROWS; gy += 1) {
-    for (let gx = 0; gx < GRID_COLUMNS; gx += 1) {
+function towerOverlapsBlockedTile(map: MapDefinition, x: number, y: number, radius: number) {
+  for (let gy = 0; gy < map.gridRows; gy += 1) {
+    for (let gx = 0; gx < map.gridColumns; gx += 1) {
       const key = gridTileKey({ gx, gy });
-      if (!PATH_TILES.has(key) && !BASE_TILES.has(key)) {
+      if (!map.pathTileKeys.has(key) && !map.baseTileKeys.has(key)) {
         continue;
       }
-      const minX = GRID_ORIGIN_X + gx * GRID_SIZE;
-      const minY = GRID_ORIGIN_Y + gy * GRID_SIZE;
-      const maxX = minX + GRID_SIZE;
-      const maxY = minY + GRID_SIZE;
+      const minX = map.originX + gx * map.tileSize;
+      const minY = map.originY + gy * map.tileSize;
+      const maxX = minX + map.tileSize;
+      const maxY = minY + map.tileSize;
       const nearestX = clamp(x, minX, maxX);
       const nearestY = clamp(y, minY, maxY);
       if (Math.hypot(x - nearestX, y - nearestY) < radius) {
@@ -201,30 +215,67 @@ function towerOverlapsBlockedTile(x: number, y: number, radius: number) {
   return false;
 }
 
-function getTowerPlacementError(state: MatchState, x: number, y: number, spec: TowerSpec, playerMoney: number) {
+export function classifyTowerPlacement(map: MapDefinition, x: number, y: number, radius: number):
+  | { ok: true; layer: TowerLayer }
+  | { ok: false; reason: string } {
+  if (x - radius < 0 || y - radius < 0 || x + radius > map.world.width || y + radius > map.world.height) {
+    return { ok: false, reason: "Too close to the edge." };
+  }
+  if (towerOverlapsBlockedTile(map, x, y, radius)) {
+    return { ok: false, reason: "Tower hitbox overlaps the path or base." };
+  }
+  for (const shape of map.solidShapes) {
+    if (shape.kind === "circle") {
+      if (Math.hypot(x - shape.x, y - shape.y) < shape.r + radius) {
+        return { ok: false, reason: "Tower hitbox overlaps terrain." };
+      }
+    } else if (rectIntersectsCircle(shape, x, y, radius)) {
+      return { ok: false, reason: "Tower hitbox overlaps terrain." };
+    }
+  }
+  let layer: TowerLayer = "ground";
+  for (const rect of map.elevatorFootprints) {
+    if (rectContainsCircle(rect, x, y, radius)) {
+      layer = "elevated";
+      return { ok: true, layer };
+    }
+    if (rectIntersectsCircle(rect, x, y, radius)) {
+      return { ok: false, reason: "Tower must sit fully on the rooftop." };
+    }
+  }
+  return { ok: true, layer };
+}
+
+function getTowerPlacementError(
+  map: MapDefinition,
+  state: MatchState,
+  x: number,
+  y: number,
+  spec: TowerSpec,
+  playerMoney: number,
+): { error: string | null; layer: TowerLayer } {
   if (state.gameOver) {
-    return "The round is over.";
+    return { error: "The round is over.", layer: "ground" };
   }
   if (playerMoney < spec.cost) {
-    return `Need $${spec.cost}.`;
+    return { error: `Need $${spec.cost}.`, layer: "ground" };
   }
-  if (x - spec.radius < 0 || y - spec.radius < 0 || x + spec.radius > TOWER_DEFENSE_WORLD.width || y + spec.radius > TOWER_DEFENSE_WORLD.height) {
-    return "Too close to the edge.";
-  }
-  if (towerOverlapsBlockedTile(x, y, spec.radius)) {
-    return "Tower hitbox overlaps the path or base.";
+  const result = classifyTowerPlacement(map, x, y, spec.radius);
+  if (!result.ok) {
+    return { error: result.reason, layer: "ground" };
   }
   for (const tower of state.towers) {
     const otherSpec = TOWER_SPECS[tower.type];
     if (Math.hypot(tower.x - x, tower.y - y) < otherSpec.radius + spec.radius + 6) {
-      return "Tower hitbox overlaps another tower.";
+      return { error: "Tower hitbox overlaps another tower.", layer: result.layer };
     }
   }
-  return null;
+  return { error: null, layer: result.layer };
 }
 
-function spawnEnemy(state: MatchState, template: EnemyTemplate) {
-  const spawn = tileCenter(ENEMY_PATH[0]);
+function spawnEnemy(map: MapDefinition, state: MatchState, template: EnemyTemplate) {
+  const spawnTile = map.enemyPath[0];
+  const spawn = tileCenterOf(map, spawnTile.gx, spawnTile.gy);
   state.enemies.push({
     id: `enemy-${state.nextEnemyId}`,
     kind: template.kind,
@@ -253,8 +304,9 @@ export function createInitialPlayerState() {
   };
 }
 
-export function createInitialMatchState(now = Date.now()): MatchState {
+export function createInitialMatchState(now = Date.now(), mapId: string = DEFAULT_MAP_ID): MatchState {
   return {
+    mapId,
     baseHp: BASE_MAX_HP,
     baseMaxHp: BASE_MAX_HP,
     wave: 1,
@@ -273,8 +325,18 @@ export function createInitialMatchState(now = Date.now()): MatchState {
   };
 }
 
-export function applyMatchEvents(state: MatchState, playerStates: Record<string, MatchPlayerState>, events: MatchInputEvent[]) {
+/** Returns a unique id-prefix scheme that keeps enemy/tower ids per-match. */
+function activeMap(state: MatchState): MapDefinition {
+  return getMap(state.mapId);
+}
+
+export function applyMatchEvents(
+  state: MatchState,
+  playerStates: Record<string, MatchPlayerState>,
+  events: MatchInputEvent[],
+) {
   hydrateMatchStateCollections(state);
+  const map = activeMap(state);
   const statuses: string[] = [];
   for (const event of events) {
     if (event.type === "setSelectedTower") {
@@ -302,7 +364,7 @@ export function applyMatchEvents(state: MatchState, playerStates: Record<string,
         continue;
       }
       const spec = TOWER_SPECS[event.payload.type];
-      const error = getTowerPlacementError(state, event.payload.x, event.payload.y, spec, playerState.money);
+      const { error, layer } = getTowerPlacementError(map, state, event.payload.x, event.payload.y, spec, playerState.money);
       if (error) {
         statuses.push(error);
         continue;
@@ -315,9 +377,10 @@ export function applyMatchEvents(state: MatchState, playerStates: Record<string,
         x: event.payload.x,
         y: event.payload.y,
         cooldown: 0,
+        layer,
       });
       state.nextTowerId += 1;
-      statuses.push(`${spec.name} placed.`);
+      statuses.push(`${spec.name} placed${layer === "elevated" ? " on the rooftop" : ""}.`);
     }
   }
   return statuses;
@@ -330,6 +393,7 @@ export function simulateMatchTick(
   now = Date.now(),
 ) {
   hydrateMatchStateCollections(state);
+  const map = activeMap(state);
   if (state.gameOver) {
     state.updatedAt = now;
     return;
@@ -347,7 +411,7 @@ export function simulateMatchTick(
   } else if (state.spawnedThisWave < waveConfig.totalEnemies) {
     state.spawnTimer -= deltaSeconds;
     if (state.spawnTimer <= 0) {
-      spawnEnemy(state, enemyTemplateForWave(state.wave, state.spawnedThisWave));
+      spawnEnemy(map, state, enemyTemplateForWave(state.wave, state.spawnedThisWave));
       state.spawnedThisWave += 1;
       state.spawnTimer = waveConfig.spawnInterval;
     }
@@ -357,7 +421,7 @@ export function simulateMatchTick(
     const enemy = state.enemies[i];
     if (enemy.hp <= 0) {
       state.enemies.splice(i, 1);
-    } else if (advanceEnemy(enemy, deltaSeconds)) {
+    } else if (advanceEnemy(map, enemy, deltaSeconds)) {
       state.baseHp = Math.max(0, state.baseHp - enemy.damage);
       state.enemies.splice(i, 1);
     }
@@ -369,7 +433,7 @@ export function simulateMatchTick(
     if (tower.cooldown > 0) {
       continue;
     }
-    const target = findTowerTarget(state, tower, spec);
+    const target = findTowerTarget(map, state, tower, spec);
     if (target) {
       const ownerState = playerStates[tower.ownerId];
       if (ownerState) {
@@ -409,3 +473,4 @@ export function simulateMatchTick(
   state.updatedAt = now;
 }
 
+export type { MapDefinition, GridPoint };

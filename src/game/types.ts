@@ -63,6 +63,8 @@ export type TowerSpec = {
   slowDuration?: number;
 };
 
+export type TowerLayer = "ground" | "elevated";
+
 export type Tower = {
   id: string;
   ownerId: string;
@@ -70,6 +72,7 @@ export type Tower = {
   x: number;
   y: number;
   cooldown: number;
+  layer?: TowerLayer;
 };
 
 export type TowerShot = {
@@ -93,9 +96,11 @@ export type MatchMeta = {
   playerIds: string[];
   status: "starting" | "running" | "ended";
   createdAt: number | object;
+  mapId?: string;
 };
 
 export type MatchState = {
+  mapId: string;
   wave: number;
   baseHp: number;
   baseMaxHp: number;

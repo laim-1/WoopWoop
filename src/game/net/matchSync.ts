@@ -46,9 +46,10 @@ export async function ensureMatchRoom(
   matchId: string,
   hostId: string,
   playerIds: string[],
+  mapId: string,
 ) {
   const root = ref(database, matchPath(matchId));
-  const roomState = createInitialMatchState();
+  const roomState = createInitialMatchState(Date.now(), mapId);
   const playerState: Record<string, MatchPlayerState> = {};
   for (const playerId of playerIds) {
     playerState[playerId] = createInitialPlayerState();
@@ -59,6 +60,7 @@ export async function ensureMatchRoom(
     playerIds,
     status: "running",
     createdAt: serverTimestamp(),
+    mapId,
   };
 
   // Multi-path update so each child is evaluated against its own rule.

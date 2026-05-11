@@ -21,7 +21,7 @@ describe("simulation", () => {
         at: Date.now(),
         playerId: "p1",
         type: "placeTower",
-        payload: { type: "dart", x: 500, y: 980 },
+        payload: { type: "dart", x: 500, y: 1140 },
       },
     ]);
 

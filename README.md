@@ -11,10 +11,17 @@ The current build is an early tower defense prototype:
 - The lobby has queue boxes for **Single Player** and **Duos**.
 - Single player starts a tower defense test round.
 - Duos start once two players are waiting in the duo queue.
-- Enemies move tile-to-tile along a grid path and damage the base when they
+- When a queue resolves, a **map picker overlay** opens. In single it's just
+  you; in duo the host (lowest UID) picks and the partner sees a waiting card.
+- Five maps ship with the game (forest, desert, volcano, moon, city). Each has
+  its own path, theme, and decorations.
+- Enemies move tile-to-tile along the map's path and damage the base when they
   reach the end.
-- Players carry a selected tower in front of them and click to place it.
-- Towers cannot overlap the path, base, or another tower hitbox.
+- Players carry a selected tower in front of them and click to place it. Some
+  decorations block placement (trees, cacti, dead trees, lava pools, craters),
+  some block sight lines for ground towers (buildings, craters), and buildings
+  let you place a tower on the rooftop — those towers become **elevated** and
+  shoot over everything.
 - Towers automatically target enemies in range, damage them, and kills award
   money for more towers.
 - The round is lost when base HP reaches 0.
@@ -62,7 +69,9 @@ can land changes without breaking sync.
 | Match lifecycle | `src/main.ts` (`startMatch`, `returnToLobby`, `coerceMatchStateFromRemote`) | Builds the deterministic `matchId` (`duo-<sortedUids>`), picks the host (lowest UID), creates the RTDB room, attaches `matchSync`, and tears it down on return. |
 | Multiplayer sync | `src/game/net/matchSync.ts` | The host runs the simulation in a 50 ms `setInterval`, applies queued input events, and writes `state` + `playerState` to RTDB via a multi-path `update`. Non-hosts mirror RTDB snapshots via `onValue`. |
 | Pure simulation | `src/game/simulation.ts` | Stateless reducers and tick advance. Used by both offline mode and the multiplayer host. Has Vitest coverage in `simulation.test.ts`. |
-| Towers, enemies, path | `src/game/constants.ts`, `src/game/types.ts` | Map geometry, base/path tiles, tower specs (cost / range / damage / etc.), enemy templates. |
+| Towers, enemies | `src/game/constants.ts`, `src/game/types.ts` | Tower specs (cost / range / damage / etc.), enemy templates, base HP and starting money. |
+| Maps | `src/game/maps.ts` | Five map definitions (`forest`, `desert`, `volcano`, `moon`, `city`). Each has its own grid, world size, path, base tiles, theme palette, decorations, and derived collision/line-of-sight shapes. `MapDefinition.solidShapes` blocks tower placement, `lineBlockers` blocks ground-tower sight, `elevatorFootprints` (buildings) turns the tower's layer to `"elevated"`. |
+| Map selection | `src/main.ts` (`startMatch`, `beginMatch`, `showMapSelectOverlay`, `clearPendingMatch`) and `.map-select-*` in `src/styles.css` | When a queue resolves a `pendingMatch` is staged and the picker is shown. In duo the non-host watches `rooms/matches/$matchId/meta` for the host's `mapId` and joins automatically. |
 | Tower placement, shop, wave button | `src/main.ts` (`placeSelectedTower`, `pointerHitsTowerShopPanel`, `requestStartWave`, `drawTowerDefenseHud`) | Locally validates placement, submits a `placeTower` event in duo (or mutates state directly in single/offline). |
 | Mobile / touch controls | `src/main.ts` (joystick + sprint handlers, `isTouchDevice`), `src/styles.css` (`.touch-joystick`, `.touch-sprint`, `.orientation-lock`) | Bottom-left analog stick, bottom-right sprint button, portrait-only overlay on phones. Detected via `(pointer: coarse)`. |
 | Build info banner | `vite.config.ts`, `src/main.ts` (`renderBuildInfo`), `src/styles.css` (`.build-info`) | Injects `__BUILD_INFO__` (short SHA, commit subject, ISO date) at build time. Shown top-right of the login screen so the owner can verify the deploy. |
@@ -239,6 +248,30 @@ the game status line, confirm the live rules match the file below.
 
 Stand inside the Single Player or Duos queue box to join that queue. Leaving the
 box leaves the queue.
+
+## Maps
+
+| Map | Theme | Notes |
+| --- | --- | --- |
+| Mossglade | Forest | Classic S-curve. Trees block placement, bushes and rocks are visual only. |
+| Sunscorch | Desert | Zig-zag path through dunes. Cacti block placement. |
+| Cinderpeak | Volcano | Vertical-heavy path. Lava pools and dead trees block placement; ash and vents are visual. |
+| Selene Drift | Moon | Long winding path. Craters block placement **and** sight lines for ground towers. |
+| Neon Heights | City | 24×14 grid (larger than the screen, you walk around). Buildings block sight lines for ground towers but let you place towers on the rooftop — those become elevated and shoot over everything. |
+
+### Decoration → gameplay rules
+
+| Decoration | Blocks placement | Blocks ground-tower sight | Elevates tower? |
+| --- | --- | --- | --- |
+| Tree / dead tree / cactus / lava pool | Yes | No | No |
+| Crater | Yes | Yes | No |
+| Building | No | Yes | Yes — towers fully inside the footprint become `"elevated"` and ignore sight blockers. |
+| Rock / bush / dune / vent / star / skull / street light / car | No | No | No |
+
+Elevated towers are drawn with a dashed light ring; the placement ghost turns
+blue when the cursor is over a valid rooftop. Sight-blocked targets are simply
+ignored when a ground tower picks its next shot — splash damage still applies
+from a target that *was* visible.
 
 ## Towers
 

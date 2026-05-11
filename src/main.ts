@@ -1,13 +1,25 @@
 import { get, onDisconnect, onValue, ref, remove, serverTimestamp, set } from "firebase/database";
 import type { Unsubscribe } from "firebase/database";
 import { auth, createFirebaseAccount, database, isFirebaseConfigured, signInFirebaseAccount } from "./firebase";
-import { BASE_TILES, ENEMY_PATH, ENEMY_TEMPLATES, GRID_COLUMNS, GRID_ORIGIN_X, GRID_ORIGIN_Y, GRID_ROWS, GRID_SIZE, PATH_TILES, STARTING_MONEY, TOWER_DEFENSE_WORLD, TOWER_ORDER, TOWER_SPECS, WAVE_BREAK_SECONDS, gridTileKey } from "./game/constants";
+import { ENEMY_TEMPLATES, STARTING_MONEY, TOWER_ORDER, TOWER_SPECS, WAVE_BREAK_SECONDS } from "./game/constants";
+import {
+  DEFAULT_MAP_ID,
+  MAPS,
+  MAP_IDS,
+  getMap,
+  isMapId,
+  segmentIntersectsCircle,
+  segmentIntersectsRect,
+  tileCenterOf,
+  type Decoration,
+  type MapDefinition,
+  type MapId,
+} from "./game/maps";
 import { createMatchSync, ensureMatchRoom } from "./game/net/matchSync";
-import { createInitialMatchState, firebaseIndexedList } from "./game/simulation";
+import { classifyTowerPlacement, createInitialMatchState, firebaseIndexedList } from "./game/simulation";
 import type {
   Enemy,
   EnemyTemplate,
-  GridPoint,
   MatchPlayerState,
   MatchState,
   Player,
@@ -16,6 +28,7 @@ import type {
   QueueMode,
   SceneId,
   Tower,
+  TowerLayer,
   TowerShot,
   TowerSpec,
   TowerType,
@@ -200,6 +213,16 @@ app.innerHTML = `
         <p>WoopWoop is portrait-only on phones. Turn your device upright to keep playing.</p>
       </div>
     </div>
+
+    <div class="map-select is-hidden" id="map-select" role="dialog" aria-labelledby="map-select-title">
+      <div class="map-select-card">
+        <h2 id="map-select-title">Pick a map</h2>
+        <p class="map-select-sub" id="map-select-sub">Choose where the round happens.</p>
+        <div class="map-select-grid" id="map-select-grid"></div>
+        <p class="map-select-waiting is-hidden" id="map-select-waiting">Waiting for the host to pick a map...</p>
+        <button type="button" class="map-select-cancel" id="map-select-cancel">Cancel</button>
+      </div>
+    </div>
   </main>
 `;
 
@@ -242,6 +265,12 @@ const buildInfoCard = requireElement<HTMLElement>("#build-info");
 const buildInfoSubject = requireElement<HTMLParagraphElement>("#build-info-subject");
 const buildInfoSha = requireElement<HTMLSpanElement>("#build-info-sha");
 const buildInfoTime = requireElement<HTMLSpanElement>("#build-info-time");
+const mapSelectRoot = requireElement<HTMLDivElement>("#map-select");
+const mapSelectTitle = requireElement<HTMLHeadingElement>("#map-select-title");
+const mapSelectSub = requireElement<HTMLParagraphElement>("#map-select-sub");
+const mapSelectGrid = requireElement<HTMLDivElement>("#map-select-grid");
+const mapSelectWaiting = requireElement<HTMLParagraphElement>("#map-select-waiting");
+const mapSelectCancel = requireElement<HTMLButtonElement>("#map-select-cancel");
 
 declare const __BUILD_INFO__: {
   sha: string;
@@ -432,8 +461,12 @@ function startAnimationLoop() {
   requestAnimationFrame(tick);
 }
 
+function activeMap(): MapDefinition {
+  return getMap(towerDefenseGame.mapId);
+}
+
 function activeWorld() {
-  return localPlayer?.scene === "towerDefense" ? TOWER_DEFENSE_WORLD : lobbyWorld;
+  return localPlayer?.scene === "towerDefense" ? activeMap().world : lobbyWorld;
 }
 
 function normalizeScene(scene: unknown): SceneId {
@@ -451,7 +484,7 @@ function isFirebaseDuoMatch() {
 
 function normalizePlayer(id: string, snapshot: PlayerSnapshot): Player {
   const scene = normalizeScene(snapshot.scene);
-  const world = scene === "towerDefense" ? TOWER_DEFENSE_WORLD : lobbyWorld;
+  const world = scene === "towerDefense" ? activeMap().world : lobbyWorld;
   return {
     id,
     name: typeof snapshot.name === "string" && snapshot.name.trim() ? snapshot.name.trim().slice(0, 18) : `Player ${id.slice(0, 5)}`,
@@ -549,12 +582,16 @@ function showGameShell() {
 
 function updateSceneChrome() {
   const inMatch = localPlayer?.scene === "towerDefense";
-  sceneTitle.textContent = inMatch ? "Tower Defense" : "Main Lobby";
-  sceneHelp.textContent = inMatch
-    ? towerDefenseGame.roundStarted
+  if (inMatch) {
+    const map = activeMap();
+    sceneTitle.textContent = `${map.name} — Tower Defense`;
+    sceneHelp.textContent = towerDefenseGame.roundStarted
       ? "Tower shop → pick tower → click the map."
-      : "Tap Start wave (top center). Then tower shop → click map."
-    : "WASD to move. Stand inside a portal box to queue.";
+      : "Tap Start wave (top center). Then tower shop → click map.";
+  } else {
+    sceneTitle.textContent = "Main Lobby";
+    sceneHelp.textContent = "WASD to move. Stand inside a portal box to queue.";
+  }
   sceneHelp.classList.remove("is-hidden");
   leaveGameButton.classList.toggle("is-hidden", !inMatch);
   lobbyPanel.classList.toggle("is-hidden", !hasJoinedLobby || inMatch);
@@ -871,28 +908,32 @@ function updateQueueState(frameAt: number) {
   }
 }
 
-function getMatchSpawn(playerIds: string[], playerId: string) {
+function getMatchSpawn(map: MapDefinition, playerIds: string[], playerId: string) {
   const index = Math.max(0, playerIds.indexOf(playerId));
   const offsets = [
     { x: -60, y: 0 },
     { x: 60, y: 0 }
   ];
   const offset = offsets[index % offsets.length];
+  const baseTile = map.baseTiles[Math.floor(map.baseTiles.length / 2)] ?? map.baseTiles[0];
+  const baseCenter = tileCenterOf(map, baseTile.gx, baseTile.gy);
   return {
-    x: TOWER_DEFENSE_WORLD.width / 2 + offset.x,
-    y: TOWER_DEFENSE_WORLD.height - 180 + offset.y
+    x: clamp(baseCenter.x - map.tileSize * 1.6 + offset.x, PLAYER_RADIUS, map.world.width - PLAYER_RADIUS),
+    y: clamp(baseCenter.y + offset.y, PLAYER_RADIUS, map.world.height - PLAYER_RADIUS),
   };
 }
 
-function resetTowerDefenseGame() {
-  towerDefenseGame = createInitialMatchState();
+function resetTowerDefenseGame(mapId: MapId = DEFAULT_MAP_ID) {
+  towerDefenseGame = createInitialMatchState(Date.now(), mapId);
   towerDefensePlayerState = {};
 }
 
 /** RTDB can return partial or bad numbers — normalize so spawning/timers stay valid. */
 function coerceMatchStateFromRemote(raw: MatchState): MatchState {
-  const base = createInitialMatchState(typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now());
+  const rawMapId = isMapId(raw.mapId) ? raw.mapId : DEFAULT_MAP_ID;
+  const base = createInitialMatchState(typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(), rawMapId);
   const m: MatchState = { ...base, ...raw };
+  m.mapId = rawMapId;
   m.roundStarted = typeof raw.roundStarted === "boolean" ? raw.roundStarted : false;
   if (typeof raw.spawnTimer !== "number" || !Number.isFinite(raw.spawnTimer)) {
     m.spawnTimer = base.spawnTimer;
@@ -954,11 +995,8 @@ function localMatchPlayerState() {
   return towerDefensePlayerState[localPlayer.id];
 }
 
-function tileCenter(tile: GridPoint) {
-  return {
-    x: GRID_ORIGIN_X + tile.gx * GRID_SIZE + GRID_SIZE / 2,
-    y: GRID_ORIGIN_Y + tile.gy * GRID_SIZE + GRID_SIZE / 2
-  };
+function tileCenter(map: MapDefinition, gx: number, gy: number) {
+  return tileCenterOf(map, gx, gy);
 }
 
 function currentWaveConfig() {
@@ -980,7 +1018,9 @@ function enemyTemplateForWave(wave: number, spawnedIndex: number): EnemyTemplate
 }
 
 function spawnEnemy(template: EnemyTemplate) {
-  const spawn = tileCenter(ENEMY_PATH[0]);
+  const map = activeMap();
+  const spawnTile = map.enemyPath[0];
+  const spawn = tileCenter(map, spawnTile.gx, spawnTile.gy);
   towerDefenseGame.enemies.push({
     id: `enemy-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`,
     kind: template.kind,
@@ -1024,14 +1064,16 @@ function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
     }
   }
 
-  if (enemy.pathIndex >= ENEMY_PATH.length - 1) {
+  const map = activeMap();
+  const path = map.enemyPath;
+  if (enemy.pathIndex >= path.length - 1) {
     return true;
   }
 
   let remainingDistance = enemy.speed * enemy.slowMultiplier * deltaSeconds;
-  while (remainingDistance > 0 && enemy.pathIndex < ENEMY_PATH.length - 1) {
-    const current = tileCenter(ENEMY_PATH[enemy.pathIndex]);
-    const next = tileCenter(ENEMY_PATH[enemy.pathIndex + 1]);
+  while (remainingDistance > 0 && enemy.pathIndex < path.length - 1) {
+    const current = tileCenter(map, path[enemy.pathIndex].gx, path[enemy.pathIndex].gy);
+    const next = tileCenter(map, path[enemy.pathIndex + 1].gx, path[enemy.pathIndex + 1].gy);
     const segmentLength = Math.max(1, Math.hypot(next.x - current.x, next.y - current.y));
     const distanceOnSegment = enemy.progress * segmentLength;
     const distanceToNext = segmentLength - distanceOnSegment;
@@ -1051,18 +1093,38 @@ function advanceEnemy(enemy: Enemy, deltaSeconds: number) {
     remainingDistance = 0;
   }
 
-  return enemy.pathIndex >= ENEMY_PATH.length - 1;
+  return enemy.pathIndex >= path.length - 1;
 }
 
 function distanceBetween(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function towerSightBlocked(map: MapDefinition, tower: Tower, target: { x: number; y: number }) {
+  if ((tower.layer ?? "ground") === "elevated") {
+    return false;
+  }
+  for (const shape of map.lineBlockers) {
+    if (shape.kind === "rect") {
+      if (segmentIntersectsRect(tower.x, tower.y, target.x, target.y, shape)) {
+        return true;
+      }
+    } else if (segmentIntersectsCircle(tower.x, tower.y, target.x, target.y, shape.x, shape.y, shape.r)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function findTowerTarget(tower: Tower, spec: TowerSpec) {
+  const map = activeMap();
   let best: Enemy | null = null;
   let bestProgress = -1;
   for (const enemy of towerDefenseGame.enemies) {
     if (enemy.hp <= 0 || distanceBetween(tower, enemy) > spec.range) {
+      continue;
+    }
+    if (towerSightBlocked(map, tower, enemy)) {
       continue;
     }
     const progressScore = enemy.pathIndex + enemy.progress;
@@ -1193,57 +1255,31 @@ function towerCursorWorld() {
   };
 }
 
-function towerOverlapsBlockedTile(x: number, y: number, radius: number) {
-  for (let gy = 0; gy < GRID_ROWS; gy += 1) {
-    for (let gx = 0; gx < GRID_COLUMNS; gx += 1) {
-      const key = gridTileKey({ gx, gy });
-      if (!PATH_TILES.has(key) && !BASE_TILES.has(key)) {
-        continue;
-      }
-      const minX = GRID_ORIGIN_X + gx * GRID_SIZE;
-      const minY = GRID_ORIGIN_Y + gy * GRID_SIZE;
-      const maxX = minX + GRID_SIZE;
-      const maxY = minY + GRID_SIZE;
-      const nearestX = clamp(x, minX, maxX);
-      const nearestY = clamp(y, minY, maxY);
-      if (Math.hypot(x - nearestX, y - nearestY) < radius) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function getTowerPlacementError(x: number, y: number, spec: TowerSpec) {
+function evaluateTowerPlacement(x: number, y: number, spec: TowerSpec): { error: string | null; layer: TowerLayer } {
   if (!localPlayer || localPlayer.scene !== "towerDefense") {
-    return "Enter a tower defense round first.";
+    return { error: "Enter a tower defense round first.", layer: "ground" };
   }
   if (towerDefenseGame.gameOver) {
-    return "The round is over.";
+    return { error: "The round is over.", layer: "ground" };
   }
   const playerState = localMatchPlayerState();
   if (!playerState || playerState.money < spec.cost) {
-    return `Need $${spec.cost}.`;
+    return { error: `Need $${spec.cost}.`, layer: "ground" };
   }
-  if (
-    x - spec.radius < 0 ||
-    y - spec.radius < 0 ||
-    x + spec.radius > TOWER_DEFENSE_WORLD.width ||
-    y + spec.radius > TOWER_DEFENSE_WORLD.height
-  ) {
-    return "Too close to the edge.";
-  }
-  if (towerOverlapsBlockedTile(x, y, spec.radius)) {
-    return "Tower hitbox overlaps the path or base.";
+  const map = activeMap();
+  const result = classifyTowerPlacement(map, x, y, spec.radius);
+  if (!result.ok) {
+    return { error: result.reason, layer: "ground" };
   }
   for (const tower of towerDefenseGame.towers) {
     const otherSpec = TOWER_SPECS[tower.type];
     if (Math.hypot(tower.x - x, tower.y - y) < otherSpec.radius + spec.radius + 6) {
-      return "Tower hitbox overlaps another tower.";
+      return { error: "Tower hitbox overlaps another tower.", layer: result.layer };
     }
   }
-  return null;
+  return { error: null, layer: result.layer };
 }
+
 
 function placeSelectedTower() {
   if (!towerShopArmed) {
@@ -1255,7 +1291,7 @@ function placeSelectedTower() {
     return;
   }
   const spec = selectedTowerSpec();
-  const error = getTowerPlacementError(pos.x, pos.y, spec);
+  const { error, layer } = evaluateTowerPlacement(pos.x, pos.y, spec);
   if (error) {
     setStatus(error, "error");
     return;
@@ -1278,11 +1314,12 @@ function placeSelectedTower() {
     type: spec.type,
     x: pos.x,
     y: pos.y,
-    cooldown: 0
+    cooldown: 0,
+    layer,
   });
   towerDefenseGame.nextTowerId += 1;
   towerShopArmed = false;
-  setStatus(`${spec.name} placed.`, isFirebaseConfigured ? "online" : "offline");
+  setStatus(`${spec.name} placed${layer === "elevated" ? " on a rooftop." : "."}`, isFirebaseConfigured ? "online" : "offline");
 }
 
 function updateTowerDefenseGame(deltaSeconds: number) {
@@ -1344,6 +1381,92 @@ function updateTowerDefenseGame(deltaSeconds: number) {
   }
 }
 
+type PendingMatch = {
+  mode: QueueMode;
+  matchId: string;
+  hostId: string;
+  isHost: boolean;
+  playerIds: string[];
+  metaUnsub?: Unsubscribe;
+};
+
+let pendingMatch: PendingMatch | null = null;
+
+function buildMapSelectCard(map: MapDefinition, isHost: boolean) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "map-select-tile";
+  button.dataset.mapId = map.id;
+  button.disabled = !isHost;
+  button.style.setProperty("--map-ground", map.theme.ground);
+  button.style.setProperty("--map-path", map.theme.pathTile);
+  button.style.setProperty("--map-base", map.theme.baseTile);
+  button.style.setProperty("--map-accent", map.theme.centerline?.color ?? map.theme.labelColor);
+  button.innerHTML = `
+    <div class="map-select-swatch" aria-hidden="true">
+      <div class="map-select-swatch-ground"></div>
+      <div class="map-select-swatch-path"></div>
+      <div class="map-select-swatch-base"></div>
+    </div>
+    <div class="map-select-meta">
+      <strong>${map.name}</strong>
+      <span>${map.blurb}</span>
+    </div>
+  `;
+  if (isHost) {
+    button.addEventListener("click", () => {
+      const pending = pendingMatch;
+      if (!pending) return;
+      void beginMatch(pending, map.id);
+    });
+  }
+  return button;
+}
+
+function showMapSelectOverlay(opts: { mode: QueueMode; isHost: boolean; hostName: string }) {
+  mapSelectGrid.innerHTML = "";
+  for (const id of MAP_IDS) {
+    mapSelectGrid.append(buildMapSelectCard(MAPS[id], opts.isHost));
+  }
+  mapSelectTitle.textContent = opts.isHost ? "Pick a map" : "Picking a map...";
+  if (opts.isHost) {
+    mapSelectSub.textContent = opts.mode === "duo"
+      ? "You're the host. Your partner is waiting."
+      : "Pick where the round happens.";
+    mapSelectWaiting.classList.add("is-hidden");
+    mapSelectGrid.classList.remove("is-hidden");
+  } else {
+    mapSelectSub.textContent = `${opts.hostName} is choosing a map.`;
+    mapSelectWaiting.classList.remove("is-hidden");
+    mapSelectGrid.classList.add("is-hidden");
+  }
+  mapSelectCancel.textContent = opts.mode === "duo" ? "Leave queue" : "Cancel";
+  mapSelectRoot.classList.remove("is-hidden");
+}
+
+function hideMapSelectOverlay() {
+  mapSelectRoot.classList.add("is-hidden");
+  mapSelectGrid.innerHTML = "";
+}
+
+mapSelectCancel.addEventListener("click", () => {
+  const pending = pendingMatch;
+  clearPendingMatch();
+  if (pending) {
+    void leaveQueue(pending.mode).catch((error) => {
+      logBackgroundFailure("Queue leave failed", error);
+    });
+  }
+  setStatus("Cancelled.", isFirebaseConfigured ? "online" : "offline");
+  updateQueuePanel();
+});
+
+function clearPendingMatch() {
+  pendingMatch?.metaUnsub?.();
+  pendingMatch = null;
+  hideMapSelectOverlay();
+}
+
 async function startMatch(mode: QueueMode, playerIds: string[]) {
   if (!localPlayer || localPlayer.scene !== "lobby") {
     return;
@@ -1354,11 +1477,56 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
     return;
   }
 
+  if (pendingMatch && pendingMatch.playerIds.join("-") === sortedIds.join("-") && pendingMatch.mode === mode) {
+    return;
+  }
+
   const matchId = mode === "single" ? `single-${localPlayer.id}-${Date.now()}` : `duo-${sortedIds.join("-")}`;
   const hostId = sortedIds[0];
   const isHost = localPlayer.id === hostId;
-  currentMatchPlayerIds = sortedIds;
-  const spawn = getMatchSpawn(sortedIds, localPlayer.id);
+
+  clearPendingMatch();
+  pendingMatch = { mode, matchId, hostId, isHost, playerIds: sortedIds };
+  activeQueueMode = null;
+  queueEnteredAt = 0;
+
+  const hostName = isHost
+    ? localPlayer.name
+    : players.get(hostId)?.name ?? queues.duo.get(hostId)?.name ?? "the host";
+
+  if (mode === "duo" && !isHost && isFirebaseConfigured) {
+    pendingMatch.metaUnsub = onValue(ref(database, `rooms/matches/${matchId}/meta`), (snap) => {
+      const meta = snap.val() as { mapId?: string; hostId?: string } | null;
+      if (meta?.mapId && isMapId(meta.mapId) && pendingMatch?.matchId === matchId) {
+        const id = meta.mapId;
+        pendingMatch.metaUnsub?.();
+        if (pendingMatch) pendingMatch.metaUnsub = undefined;
+        void beginMatch(pendingMatch, id);
+      }
+    });
+  }
+
+  showMapSelectOverlay({ mode, isHost, hostName });
+}
+
+async function beginMatch(pending: PendingMatch, mapId: MapId) {
+  if (!localPlayer) {
+    clearPendingMatch();
+    return;
+  }
+  if (pendingMatch !== pending) {
+    return;
+  }
+
+  pendingMatch?.metaUnsub?.();
+  pendingMatch = null;
+  hideMapSelectOverlay();
+
+  const { mode, matchId, hostId, isHost, playerIds } = pending;
+  currentMatchPlayerIds = playerIds;
+  resetTowerDefenseGame(mapId);
+  const map = activeMap();
+  const spawn = getMatchSpawn(map, playerIds, localPlayer.id);
   localPlayer.scene = "towerDefense";
   localPlayer.matchId = matchId;
   localPlayer.x = spawn.x;
@@ -1371,11 +1539,10 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   cameraX = spawn.x;
   cameraY = spawn.y;
   players.set(localPlayer.id, localPlayer);
-  resetTowerDefenseGame();
   if (!isFirebaseConfigured || mode === "single") {
     towerDefenseGame.roundStarted = true;
   }
-  for (const playerId of sortedIds) {
+  for (const playerId of playerIds) {
     towerDefensePlayerState[playerId] = {
       money: STARTING_MONEY,
       selectedTowerType: "dart",
@@ -1384,17 +1551,13 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   }
   selectedTowerType = "dart";
   towerShopArmed = false;
-  activeQueueMode = null;
-  queueEnteredAt = 0;
-  // Keep filled duo queues visible briefly so both clients can observe the pair
-  // before either one cleans up their own queue entry.
   scheduleQueueCleanup(mode, mode === "duo" ? 2000 : 0);
   updateSceneChrome();
   updateQueuePanel();
   setStatus(
     mode === "duo"
-      ? "Tap Start wave when ready (top center)."
-      : "Wave running — enemies are spawning.",
+      ? `${map.name} — Tap Start wave when ready (top center).`
+      : `${map.name} — wave running.`,
     isFirebaseConfigured ? "online" : "offline",
   );
 
@@ -1404,7 +1567,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
     if (mode === "duo") {
       if (isHost) {
         try {
-          await ensureMatchRoom(database, matchId, hostId, sortedIds);
+          await ensureMatchRoom(database, matchId, hostId, playerIds, mapId);
         } catch (error) {
           const message = error instanceof Error ? error.message : "network error";
           setStatus(`Match create failed: ${message}`, "error");
@@ -1415,7 +1578,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
       matchSync = createMatchSync(matchId, {
         database,
         localPlayerId: localPlayer.id,
-        playerIds: sortedIds,
+        playerIds,
         mode,
         isHost,
         onState: (state, playerState) => {
@@ -1441,6 +1604,7 @@ async function returnToLobby() {
   }
 
   clearLocalQueues();
+  clearPendingMatch();
   matchSync?.stop();
   matchSync = null;
   resetTowerDefenseGame();
@@ -1718,10 +1882,21 @@ function drawEnemy(enemy: Enemy) {
 
 function drawTower(tower: Tower) {
   const spec = TOWER_SPECS[tower.type];
-  context.fillStyle = "rgba(0, 0, 0, 0.26)";
+  const elevated = (tower.layer ?? "ground") === "elevated";
+  context.fillStyle = "rgba(0, 0, 0, 0.32)";
   context.beginPath();
-  context.ellipse(tower.x, tower.y + spec.radius * 0.72, spec.radius, spec.radius * 0.42, 0, 0, Math.PI * 2);
+  context.ellipse(tower.x, tower.y + spec.radius * 0.78, spec.radius * (elevated ? 0.78 : 1), spec.radius * 0.4, 0, 0, Math.PI * 2);
   context.fill();
+
+  if (elevated) {
+    context.strokeStyle = "rgba(255, 255, 255, 0.7)";
+    context.lineWidth = 2;
+    context.setLineDash([3, 3]);
+    context.beginPath();
+    context.arc(tower.x, tower.y, spec.radius + 5, 0, Math.PI * 2);
+    context.stroke();
+    context.setLineDash([]);
+  }
 
   const isOwnedByLocal = tower.ownerId === localPlayer?.id;
   context.fillStyle = isOwnedByLocal ? spec.color : "#f59e0b";
@@ -1760,21 +1935,35 @@ function drawTowerCursorPreview() {
     return;
   }
   const spec = selectedTowerSpec();
-  const valid = getTowerPlacementError(pos.x, pos.y, spec) === null;
+  const { error, layer } = evaluateTowerPlacement(pos.x, pos.y, spec);
+  const valid = error === null;
 
   context.save();
   context.globalAlpha = valid ? 0.72 : 0.42;
-  context.strokeStyle = valid ? "rgba(134, 239, 172, 0.9)" : "rgba(248, 113, 113, 0.95)";
+  context.strokeStyle = valid
+    ? layer === "elevated"
+      ? "rgba(96, 165, 250, 0.95)"
+      : "rgba(134, 239, 172, 0.9)"
+    : "rgba(248, 113, 113, 0.95)";
   context.fillStyle = spec.color;
   context.lineWidth = 3;
   context.beginPath();
   context.arc(pos.x, pos.y, spec.radius, 0, Math.PI * 2);
   context.fill();
   context.stroke();
+  if (valid && layer === "elevated") {
+    context.setLineDash([4, 4]);
+    context.lineWidth = 2;
+    context.strokeStyle = "rgba(191, 219, 254, 0.95)";
+    context.beginPath();
+    context.arc(pos.x, pos.y, spec.radius + 6, 0, Math.PI * 2);
+    context.stroke();
+    context.setLineDash([]);
+  }
   context.globalAlpha = 0.18;
   context.beginPath();
   context.arc(pos.x, pos.y, spec.range, 0, Math.PI * 2);
-  context.fillStyle = valid ? "#86efac" : "#f87171";
+  context.fillStyle = valid ? (layer === "elevated" ? "#93c5fd" : "#86efac") : "#f87171";
   context.fill();
   context.restore();
 }
@@ -1889,43 +2078,315 @@ function drawTowerDefenseHud() {
   context.restore();
 }
 
-function drawTowerDefenseGame() {
-  context.fillStyle = "#1f2634";
-  context.fillRect(0, 0, TOWER_DEFENSE_WORLD.width, TOWER_DEFENSE_WORLD.height);
+function drawDecoration(d: Decoration) {
+  switch (d.kind) {
+    case "tree": {
+      context.fillStyle = d.shade;
+      context.beginPath();
+      context.ellipse(d.x + d.size * 0.18, d.y + d.size * 0.34, d.size * 0.92, d.size * 0.55, 0, 0, Math.PI * 2);
+      context.fill();
 
-  for (let gy = 0; gy < GRID_ROWS; gy += 1) {
-    for (let gx = 0; gx < GRID_COLUMNS; gx += 1) {
-      const x = GRID_ORIGIN_X + gx * GRID_SIZE;
-      const y = GRID_ORIGIN_Y + gy * GRID_SIZE;
-      const key = gridTileKey({ gx, gy });
-      const isSpawn = gx === ENEMY_PATH[0].gx && gy === ENEMY_PATH[0].gy;
-      context.fillStyle = BASE_TILES.has(key) ? "#8f3434" : isSpawn ? "#356d8f" : PATH_TILES.has(key) ? "#b98b54" : "#24344b";
-      context.fillRect(x + 1, y + 1, GRID_SIZE - 2, GRID_SIZE - 2);
-      context.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      context.fillStyle = d.trunk;
+      context.beginPath();
+      context.arc(d.x, d.y + d.size * 0.05, d.size * 0.22, 0, Math.PI * 2);
+      context.fill();
+
+      context.fillStyle = d.canopy;
+      context.beginPath();
+      context.arc(d.x - d.size * 0.18, d.y - d.size * 0.05, d.size * 0.65, 0, Math.PI * 2);
+      context.arc(d.x + d.size * 0.25, d.y - d.size * 0.12, d.size * 0.6, 0, Math.PI * 2);
+      context.arc(d.x, d.y - d.size * 0.32, d.size * 0.5, 0, Math.PI * 2);
+      context.fill();
+
+      context.fillStyle = "rgba(255,255,255,0.06)";
+      context.beginPath();
+      context.arc(d.x - d.size * 0.12, d.y - d.size * 0.22, d.size * 0.28, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "deadTree": {
+      context.strokeStyle = "#1a1310";
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(d.x, d.y + d.size * 0.4);
+      context.lineTo(d.x, d.y - d.size * 0.5);
+      context.moveTo(d.x, d.y - d.size * 0.2);
+      context.lineTo(d.x - d.size * 0.55, d.y - d.size * 0.45);
+      context.moveTo(d.x, d.y - d.size * 0.05);
+      context.lineTo(d.x + d.size * 0.5, d.y - d.size * 0.4);
+      context.moveTo(d.x, d.y - d.size * 0.35);
+      context.lineTo(d.x + d.size * 0.3, d.y - d.size * 0.7);
+      context.stroke();
+      break;
+    }
+    case "cactus": {
+      context.fillStyle = "#1a1310";
+      context.beginPath();
+      context.ellipse(d.x, d.y + d.size * 0.45, d.size * 0.55, d.size * 0.18, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#2f7a3c";
+      context.beginPath();
+      context.ellipse(d.x, d.y, d.size * 0.32, d.size * 0.55, 0, 0, Math.PI * 2);
+      context.fill();
+      if (d.arms >= 1) {
+        context.beginPath();
+        context.ellipse(d.x - d.size * 0.42, d.y - d.size * 0.05, d.size * 0.18, d.size * 0.35, 0, 0, Math.PI * 2);
+        context.fill();
+      }
+      if (d.arms >= 2) {
+        context.beginPath();
+        context.ellipse(d.x + d.size * 0.42, d.y + d.size * 0.05, d.size * 0.18, d.size * 0.35, 0, 0, Math.PI * 2);
+        context.fill();
+      }
+      if (d.arms >= 3) {
+        context.beginPath();
+        context.ellipse(d.x, d.y - d.size * 0.55, d.size * 0.16, d.size * 0.28, 0, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.strokeStyle = "rgba(255,255,255,0.18)";
       context.lineWidth = 1;
-      context.strokeRect(x + 0.5, y + 0.5, GRID_SIZE - 1, GRID_SIZE - 1);
+      context.beginPath();
+      context.moveTo(d.x - d.size * 0.05, d.y - d.size * 0.35);
+      context.lineTo(d.x - d.size * 0.05, d.y + d.size * 0.35);
+      context.moveTo(d.x + d.size * 0.05, d.y - d.size * 0.35);
+      context.lineTo(d.x + d.size * 0.05, d.y + d.size * 0.35);
+      context.stroke();
+      break;
+    }
+    case "bush": {
+      context.fillStyle = d.color;
+      context.beginPath();
+      context.arc(d.x - d.size * 0.4, d.y, d.size * 0.6, 0, Math.PI * 2);
+      context.arc(d.x + d.size * 0.4, d.y, d.size * 0.55, 0, Math.PI * 2);
+      context.arc(d.x, d.y - d.size * 0.25, d.size * 0.5, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "rock": {
+      context.fillStyle = "rgba(0,0,0,0.32)";
+      context.beginPath();
+      context.ellipse(d.x + 2, d.y + d.size * 0.35, d.size * 0.9, d.size * 0.32, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = d.color;
+      context.beginPath();
+      context.ellipse(d.x, d.y, d.size, d.size * 0.78, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "rgba(255,255,255,0.12)";
+      context.beginPath();
+      context.ellipse(d.x - d.size * 0.25, d.y - d.size * 0.3, d.size * 0.35, d.size * 0.2, 0, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "dune": {
+      context.fillStyle = d.color;
+      context.beginPath();
+      context.ellipse(d.x, d.y, d.rx, d.ry, 0, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "lava": {
+      const grad = context.createRadialGradient(d.x, d.y, d.size * 0.1, d.x, d.y, d.size);
+      grad.addColorStop(0, "#ffe27a");
+      grad.addColorStop(0.4, "#ff8526");
+      grad.addColorStop(1, "#7c1a0c");
+      context.fillStyle = grad;
+      context.beginPath();
+      context.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "#3b0a06";
+      context.lineWidth = 2;
+      context.stroke();
+      break;
+    }
+    case "vent": {
+      context.fillStyle = "#221816";
+      context.beginPath();
+      context.arc(d.x, d.y, d.size * 0.6, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "rgba(255, 153, 90, 0.5)";
+      context.beginPath();
+      context.ellipse(d.x, d.y - d.size * 0.7, d.size * 0.5, d.size * 0.45, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "rgba(255, 200, 130, 0.35)";
+      context.beginPath();
+      context.ellipse(d.x, d.y - d.size * 1.2, d.size * 0.36, d.size * 0.3, 0, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "crater": {
+      const grad = context.createRadialGradient(d.x - d.size * 0.25, d.y - d.size * 0.25, d.size * 0.1, d.x, d.y, d.size);
+      grad.addColorStop(0, "#3a4458");
+      grad.addColorStop(0.6, "#181f2c");
+      grad.addColorStop(1, "#0c1018");
+      context.fillStyle = grad;
+      context.beginPath();
+      context.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+      context.fill();
+      context.strokeStyle = "rgba(220, 230, 245, 0.45)";
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+      context.stroke();
+      context.strokeStyle = "rgba(255,255,255,0.18)";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.arc(d.x, d.y, d.size * 0.65, 0, Math.PI * 2);
+      context.stroke();
+      break;
+    }
+    case "star": {
+      context.fillStyle = d.bright ? "rgba(255,255,255,0.85)" : "rgba(200,210,235,0.55)";
+      context.beginPath();
+      context.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "skull": {
+      context.fillStyle = "rgba(0,0,0,0.4)";
+      context.beginPath();
+      context.ellipse(d.x, d.y + d.size * 0.4, d.size * 0.7, d.size * 0.25, 0, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#e8e3d6";
+      context.beginPath();
+      context.arc(d.x, d.y, d.size * 0.6, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#181818";
+      context.beginPath();
+      context.arc(d.x - d.size * 0.22, d.y - d.size * 0.05, d.size * 0.12, 0, Math.PI * 2);
+      context.arc(d.x + d.size * 0.22, d.y - d.size * 0.05, d.size * 0.12, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "building": {
+      context.fillStyle = "rgba(0,0,0,0.42)";
+      context.fillRect(d.x + 4, d.y + 5, d.w, d.h);
+      context.fillStyle = d.body;
+      context.fillRect(d.x, d.y, d.w, d.h);
+      context.strokeStyle = d.trim;
+      context.lineWidth = 2;
+      context.strokeRect(d.x + 0.5, d.y + 0.5, d.w - 1, d.h - 1);
+      const innerInset = 6;
+      const winW = (d.w - innerInset * 2 - (d.cols - 1) * 4) / d.cols;
+      const winH = (d.h - innerInset * 2 - (d.rows - 1) * 4) / d.rows;
+      context.fillStyle = d.window;
+      for (let r = 0; r < d.rows; r += 1) {
+        for (let cIdx = 0; cIdx < d.cols; cIdx += 1) {
+          context.fillRect(
+            d.x + innerInset + cIdx * (winW + 4),
+            d.y + innerInset + r * (winH + 4),
+            winW,
+            winH,
+          );
+        }
+      }
+      context.fillStyle = "rgba(255,255,255,0.06)";
+      context.fillRect(d.x + 2, d.y + 2, d.w - 4, 3);
+      break;
+    }
+    case "streetLight": {
+      context.fillStyle = "#0e1623";
+      context.beginPath();
+      context.arc(d.x, d.y + 2, 5, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "rgba(252, 211, 77, 0.45)";
+      context.beginPath();
+      context.arc(d.x, d.y - 6, 22, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#facc15";
+      context.beginPath();
+      context.arc(d.x, d.y - 6, 5, 0, Math.PI * 2);
+      context.fill();
+      break;
+    }
+    case "car": {
+      context.fillStyle = "rgba(0,0,0,0.45)";
+      context.fillRect(d.x + 3, d.y + 4, d.w, d.h);
+      context.fillStyle = d.body;
+      context.fillRect(d.x, d.y, d.w, d.h);
+      context.fillStyle = "rgba(255,255,255,0.4)";
+      if (d.horizontal) {
+        context.fillRect(d.x + 6, d.y + 4, d.w - 12, 6);
+      } else {
+        context.fillRect(d.x + 4, d.y + 6, 6, d.h - 12);
+      }
+      break;
+    }
+  }
+}
+
+function drawTowerDefenseGame() {
+  const map = activeMap();
+  const theme = map.theme;
+  context.fillStyle = theme.background;
+  context.fillRect(0, 0, map.world.width, map.world.height);
+
+  if (map.id === "moon") {
+    for (const d of map.decorations) {
+      if (d.kind === "star") drawDecoration(d);
+    }
+  }
+  if (map.id === "desert") {
+    for (const d of map.decorations) {
+      if (d.kind === "dune") drawDecoration(d);
     }
   }
 
-  context.strokeStyle = "rgba(255, 244, 202, 0.72)";
-  context.lineWidth = 4;
-  context.beginPath();
-  for (const [index, point] of ENEMY_PATH.entries()) {
-    const center = tileCenter(point);
-    if (index === 0) {
-      context.moveTo(center.x, center.y);
-    } else {
-      context.lineTo(center.x, center.y);
+  for (let gy = 0; gy < map.gridRows; gy += 1) {
+    for (let gx = 0; gx < map.gridColumns; gx += 1) {
+      const x = map.originX + gx * map.tileSize;
+      const y = map.originY + gy * map.tileSize;
+      const key = `${gx}:${gy}`;
+      const isSpawn = gx === map.spawnTile.gx && gy === map.spawnTile.gy;
+      const isBase = map.baseTileKeys.has(key);
+      const isPath = map.pathTileKeys.has(key);
+      let fill = (gx + gy) % 2 === 0 ? theme.ground : theme.groundAlt;
+      if (isBase) fill = theme.baseTile;
+      else if (isSpawn) fill = theme.spawnTile;
+      else if (isPath) fill = theme.pathTile;
+      context.fillStyle = fill;
+      context.fillRect(x + 1, y + 1, map.tileSize - 2, map.tileSize - 2);
+      if (isPath || isBase) {
+        context.strokeStyle = isBase ? theme.baseTileEdge : theme.pathTileEdge;
+        context.lineWidth = 2;
+        context.strokeRect(x + 1.5, y + 1.5, map.tileSize - 3, map.tileSize - 3);
+      }
+      context.strokeStyle = theme.gridLine;
+      context.lineWidth = 1;
+      context.strokeRect(x + 0.5, y + 0.5, map.tileSize - 1, map.tileSize - 1);
     }
   }
-  context.stroke();
 
-  context.fillStyle = "#dbeafe";
+  if (theme.centerline) {
+    context.save();
+    context.strokeStyle = theme.centerline.color;
+    context.lineWidth = theme.centerline.width;
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    if (theme.centerline.dash) context.setLineDash(theme.centerline.dash);
+    context.beginPath();
+    for (const [index, point] of map.enemyPath.entries()) {
+      const center = tileCenterOf(map, point.gx, point.gy);
+      if (index === 0) context.moveTo(center.x, center.y);
+      else context.lineTo(center.x, center.y);
+    }
+    context.stroke();
+    context.restore();
+  }
+
+  for (const d of map.decorations) {
+    if (d.kind === "star" || d.kind === "dune") continue;
+    drawDecoration(d);
+  }
+
+  const spawnCenter = tileCenterOf(map, map.spawnTile.gx, map.spawnTile.gy);
+  const baseTile = map.baseTiles[Math.floor(map.baseTiles.length / 2)] ?? map.baseTiles[0];
+  const baseCenter = tileCenterOf(map, baseTile.gx, baseTile.gy);
+  context.fillStyle = theme.labelColor;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = "900 22px system-ui, sans-serif";
-  context.fillText("SPAWN", tileCenter(ENEMY_PATH[0]).x, tileCenter(ENEMY_PATH[0]).y);
-  context.fillText("BASE", tileCenter({ gx: 15, gy: 6 }).x, tileCenter({ gx: 15, gy: 6 }).y);
+  context.font = "900 18px system-ui, sans-serif";
+  context.fillText(theme.spawnName, spawnCenter.x, spawnCenter.y);
+  context.fillText(theme.baseName, baseCenter.x, baseCenter.y);
 
   for (const enemy of towerDefenseGame.enemies) {
     drawEnemy(enemy);
@@ -1936,9 +2397,11 @@ function drawTowerDefenseGame() {
   drawTowerShots();
   drawTowerCursorPreview();
 
-  context.fillStyle = "#f2ead8";
+  context.fillStyle = theme.labelColor;
   context.font = "900 38px system-ui, sans-serif";
-  context.fillText("Tower Defense", TOWER_DEFENSE_WORLD.width / 2, 92);
+  context.fillText(map.name, map.world.width / 2, 88);
+  context.font = "600 16px system-ui, sans-serif";
+  context.fillText(map.blurb, map.world.width / 2, 116);
 
   drawTowerDefenseHud();
 }
