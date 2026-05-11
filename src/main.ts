@@ -367,6 +367,11 @@ function normalizeMatchId(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** Only duo runs the host-authored RTDB sim; Firebase single-player uses local ticks (same as offline). */
+function isFirebaseDuoMatch() {
+  return Boolean(isFirebaseConfigured && localPlayer?.matchId?.startsWith("duo-"));
+}
+
 function normalizePlayer(id: string, snapshot: PlayerSnapshot): Player {
   const scene = normalizeScene(snapshot.scene);
   const world = scene === "towerDefense" ? TOWER_DEFENSE_WORLD : lobbyWorld;
@@ -837,7 +842,7 @@ function requestStartWave() {
   ) {
     return;
   }
-  if (isFirebaseConfigured && matchSync && localPlayer.matchId) {
+  if (isFirebaseDuoMatch() && matchSync) {
     void matchSync.submitStartRound().catch((networkError: unknown) => {
       setStatus(`Start failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
     });
@@ -1168,7 +1173,7 @@ function placeSelectedTower() {
     setStatus(error, "error");
     return;
   }
-  if (isFirebaseConfigured && matchSync && localPlayer) {
+  if (isFirebaseDuoMatch() && matchSync && localPlayer) {
     towerShopArmed = false;
     void matchSync.submitPlaceTower(spec.type, pos.x, pos.y).catch((networkError: unknown) => {
       setStatus(`Place failed: ${networkError instanceof Error ? networkError.message : "network error"}`, "error");
@@ -1197,7 +1202,7 @@ function updateTowerDefenseGame(deltaSeconds: number) {
   if (!localPlayer || localPlayer.scene !== "towerDefense" || towerDefenseGame.gameOver) {
     return;
   }
-  if (isFirebaseConfigured && localPlayer.matchId) {
+  if (isFirebaseDuoMatch()) {
     return;
   }
   if (!towerDefenseGame.roundStarted) {
@@ -1280,7 +1285,7 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   cameraY = spawn.y;
   players.set(localPlayer.id, localPlayer);
   resetTowerDefenseGame();
-  if (!isFirebaseConfigured) {
+  if (!isFirebaseConfigured || mode === "single") {
     towerDefenseGame.roundStarted = true;
   }
   for (const playerId of sortedIds) {
@@ -1302,41 +1307,34 @@ async function startMatch(mode: QueueMode, playerIds: string[]) {
   setStatus(
     mode === "duo"
       ? "Tap Start wave when ready (top center)."
-      : isFirebaseConfigured
-        ? "Starting wave…"
-        : "Offline — enemies are spawning.",
+      : "Wave running — enemies are spawning.",
     isFirebaseConfigured ? "online" : "offline",
   );
 
   if (isFirebaseConfigured) {
     matchSync?.stop();
-    if (isHost) {
-      await ensureMatchRoom(database, matchId, hostId, sortedIds);
-    }
-    matchSync = createMatchSync(matchId, {
-      database,
-      localPlayerId: localPlayer.id,
-      playerIds: sortedIds,
-      mode,
-      isHost,
-      onState: (state, playerState) => {
-        if (!state) {
-          return;
-        }
-        towerDefenseGame = coerceMatchStateFromRemote(state);
-        towerDefensePlayerState = playerState;
-        updateSceneChrome();
-      },
-      onStatus: (message) => {
-        setStatus(message, message.toLowerCase().includes("lose") ? "error" : "online");
-      },
-    });
-    if (mode === "single" && isHost) {
-      void matchSync.submitStartRound().catch((networkError: unknown) => {
-        setStatus(
-          `Could not start wave: ${networkError instanceof Error ? networkError.message : "network error"}`,
-          "error",
-        );
+    matchSync = null;
+    if (mode === "duo") {
+      if (isHost) {
+        await ensureMatchRoom(database, matchId, hostId, sortedIds);
+      }
+      matchSync = createMatchSync(matchId, {
+        database,
+        localPlayerId: localPlayer.id,
+        playerIds: sortedIds,
+        mode,
+        isHost,
+        onState: (state, playerState) => {
+          if (!state) {
+            return;
+          }
+          towerDefenseGame = coerceMatchStateFromRemote(state);
+          towerDefensePlayerState = playerState;
+          updateSceneChrome();
+        },
+        onStatus: (message) => {
+          setStatus(message, message.toLowerCase().includes("lose") ? "error" : "online");
+        },
       });
     }
     await syncLocalPlayer();
@@ -1991,7 +1989,7 @@ window.addEventListener("keydown", (event) => {
     const slot = Number(event.code.replace("Digit", "")) - 1;
     selectedTowerType = TOWER_ORDER[slot] ?? selectedTowerType;
     towerShopArmed = true;
-    if (isFirebaseConfigured && matchSync) {
+    if (isFirebaseDuoMatch() && matchSync) {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
     const spec = selectedTowerSpec();
@@ -2034,7 +2032,7 @@ canvas.addEventListener("pointerdown", (event) => {
   if (clickedSlot !== null) {
     selectedTowerType = clickedSlot;
     towerShopArmed = true;
-    if (isFirebaseConfigured && matchSync) {
+    if (isFirebaseDuoMatch() && matchSync) {
       void matchSync.submitSelectedTower(selectedTowerType).catch(() => undefined);
     }
     const spec = selectedTowerSpec();

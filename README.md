@@ -45,26 +45,63 @@ Also enable:
 - **Authentication** > **Sign-in method** > **Email/Password**
 - **Realtime Database** with a database URL
 
-For early local testing only, you can use these lobby rules:
+## Realtime Database rules
+
+The canonical rules file in this repo is **`database.rules.json`** at the project
+root. Copy its contents into the Firebase Console under **Realtime Database** >
+**Rules** (or deploy with the Firebase CLI), then publish.
+
+They cover:
+
+- **`rooms/lobby`** — per-player lobby position and queue entries (`players`,
+  `queues`).
+- **`rooms/matches`** — duo match rooms: `meta`, `state`, `playerState`,
+  `events` (input queue for the host), and `presence`.
+
+If you see `PERMISSION_DENIED`, `Start failed:`, or `Queue cleanup failed:` in
+the game status line, confirm the live rules match the file below.
 
 ```json
 {
   "rules": {
     "rooms": {
-      "$roomId": {
-        ".read": "auth != null",
+      "lobby": {
         "players": {
-          "$uid": {
-            ".write": "auth != null && auth.uid == $uid",
-            ".validate": "!newData.exists() || (newData.hasChildren(['name','x','y','facingX','facingY','moving','step','scene','lastSeen']) && newData.child('name').isString() && newData.child('name').val().length <= 18 && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('facingX').isNumber() && newData.child('facingY').isNumber() && newData.child('moving').isBoolean() && newData.child('step').isNumber() && newData.child('scene').isString() && (newData.child('scene').val() == 'lobby' || newData.child('scene').val() == 'towerDefense'))"
+          "$playerId": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid === $playerId"
           }
         },
         "queues": {
           "$mode": {
-            ".validate": "$mode == 'single' || $mode == 'duo'",
-            "$uid": {
-              ".write": "auth != null && auth.uid == $uid",
-              ".validate": "!newData.exists() || (newData.hasChildren(['name','queuedAt']) && newData.child('name').isString() && newData.child('name').val().length <= 18)"
+            "$playerId": {
+              ".read": "auth != null",
+              ".write": "auth != null && auth.uid === $playerId"
+            }
+          }
+        }
+      },
+      "matches": {
+        "$matchId": {
+          ".read": "auth != null",
+          "meta": {
+            ".write": "auth != null && (!data.exists() || data.child('hostId').val() === auth.uid)"
+          },
+          "state": {
+            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+          },
+          "playerState": {
+            ".write": "auth != null && root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid"
+          },
+          "events": {
+            "$eventId": {
+              ".write": "auth != null && (root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid || (newData.exists() && newData.child('playerId').val() === auth.uid))",
+              ".validate": "!newData.exists() || (newData.hasChildren(['id', 'playerId', 'type', 'at']) && (newData.child('type').val() === 'startRound' || newData.hasChild('payload')))"
+            }
+          },
+          "presence": {
+            "$playerId": {
+              ".write": "auth != null && auth.uid === $playerId"
             }
           }
         }
@@ -73,11 +110,6 @@ For early local testing only, you can use these lobby rules:
   }
 }
 ```
-
-These rules intentionally allow deletes (`!newData.exists()`) so the client can
-clean up a player's lobby and queue records when they leave a portal, enter a
-match, or disconnect. If you see `Queue cleanup failed: PERMISSION_DENIED` in an
-older build, update Firebase with the rules above.
 
 ## Controls
 
@@ -106,8 +138,9 @@ Tower placement is free-form: there are no build tiles. Placement is valid as
 long as the circular tower hitbox does not overlap the enemy path, base tiles,
 world edge, or another tower.
 
-The current tower defense round state is local to each browser, so these tower
-and combat features do not add any new Firebase Realtime Database rules yet.
+In **offline** and **Firebase single player**, the tower defense sim runs
+locally in the browser. In **Firebase duos**, the host writes shared `state` /
+`playerState` to Realtime Database (see rules above).
 
 ## Run locally
 

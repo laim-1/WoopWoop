@@ -1,4 +1,4 @@
-import { onDisconnect, onValue, push, ref, remove, serverTimestamp, set } from "firebase/database";
+import { get, onDisconnect, onValue, push, ref, remove, serverTimestamp, set, update } from "firebase/database";
 import type { Database } from "firebase/database";
 import type { MatchInputEvent, MatchMeta, MatchPlayerState, MatchState, QueueMode, TowerType } from "../types";
 import {
@@ -74,8 +74,6 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
   const { database, localPlayerId, isHost, onState, onStatus } = options;
   const root = ref(database, matchPath(matchId));
   const eventsRef = ref(database, `${matchPath(matchId)}/events`);
-  const stateRef = ref(database, `${matchPath(matchId)}/state`);
-  const playerStateRef = ref(database, `${matchPath(matchId)}/playerState`);
   const metaRef = ref(database, `${matchPath(matchId)}/meta`);
   const presenceRef = ref(database, `${matchPath(matchId)}/presence/${localPlayerId}`);
 
@@ -98,11 +96,23 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
       }
     }
     hostActive = meta?.hostId === localPlayerId || hostActive;
-    latestState = value?.state ?? null;
-    if (latestState) {
-      hydrateMatchStateCollections(latestState);
+
+    const incomingState = value?.state ?? null;
+    const incomingPlayers = value?.playerState ?? {};
+    if (incomingState) {
+      hydrateMatchStateCollections(incomingState);
     }
-    latestPlayerState = value?.playerState ?? {};
+
+    // Non-hosts mirror RTDB. The simulation host mutates `latestState` in the tick interval; replacing the
+    // reference here races Firebase (presence, echo ordering) and wipes `roundStarted` / enemies mid-tick.
+    if (latestState === null && incomingState) {
+      latestState = incomingState;
+      latestPlayerState = incomingPlayers;
+    } else if (!hostActive) {
+      latestState = incomingState;
+      latestPlayerState = incomingPlayers;
+    }
+
     onState(latestState, latestPlayerState);
   });
 
@@ -132,12 +142,36 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
     const step = hostAccumulator;
     hostAccumulator = 0;
 
-    const statuses = applyMatchEvents(latestState, latestPlayerState, localEvents);
+    // Snapshot now so events that arrive during apply/tick stay for the next interval (do not clear after apply).
+    const eventBatch = localEvents;
     localEvents = [];
-    void remove(eventsRef);
+    const statuses = applyMatchEvents(latestState, latestPlayerState, eventBatch);
+    if (eventBatch.length > 0) {
+      const processedIds = new Set(eventBatch.map((event) => event.id));
+      void get(eventsRef).then((snapshot) => {
+        if (!snapshot.exists()) {
+          return;
+        }
+        const records = snapshot.val() as Record<string, MatchInputEvent>;
+        const removals: Record<string, null> = {};
+        for (const [key, value] of Object.entries(records)) {
+          if (processedIds.has(value.id)) {
+            removals[`events/${key}`] = null;
+          }
+        }
+        if (Object.keys(removals).length > 0) {
+          void update(root, removals);
+        }
+      });
+    }
     simulateMatchTick(latestState, latestPlayerState, step, now);
-    void set(stateRef, latestState);
-    void set(playerStateRef, latestPlayerState);
+    // Single atomic write so clients never see playerState from tick N with state from tick N-1 (that wiped spawns).
+    void update(root, {
+      state: latestState,
+      playerState: latestPlayerState,
+    });
+    // Host does not rely on RTDB echo to refresh UI (rules/offline latency would hide spawns).
+    onState(latestState, latestPlayerState);
     if (statuses.length > 0) {
       onStatus(statuses[statuses.length - 1]);
     } else if (latestState.gameOver) {

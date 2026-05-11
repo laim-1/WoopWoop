@@ -31,8 +31,8 @@
           },
           "events": {
             "$eventId": {
-              ".write": "auth != null && newData.child('playerId').val() === auth.uid",
-              ".validate": "newData.hasChildren(['id', 'playerId', 'type', 'at', 'payload'])"
+              ".write": "auth != null && (root.child('rooms/matches/' + $matchId + '/meta/hostId').val() === auth.uid || (newData.exists() && newData.child('playerId').val() === auth.uid))",
+              ".validate": "!newData.exists() || (newData.hasChildren(['id', 'playerId', 'type', 'at']) && (newData.child('type').val() === 'startRound' || newData.hasChild('payload')))"
             }
           },
           "presence": {
