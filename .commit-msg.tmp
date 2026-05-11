@@ -1,6 +1,0 @@
-Add five themed maps with a host-picked map selector
-
-- New `src/game/maps.ts` ships forest, desert, volcano, moon, and a larger-than-the-screen city map. Each has its own grid, world size, path, base column, theme palette, and seeded decorations.
-- Simulation now reads path / world / blocked tiles from the active map. Tower placement checks solid decorations (trees, cacti, dead trees, lava, craters) and rejects partial overlaps with building footprints. Towers placed fully inside a building become `layer: "elevated"` and ignore line-of-sight blockers (buildings, craters); ground towers skip targets whose LOS crosses a blocker.
-- When a queue resolves, a map-select overlay opens. In duo the host picks, the partner sees a waiting card and joins automatically once `meta.mapId` arrives in RTDB.
-- Map dimensions, theme colors, and decorations flow through camera bounds, HUD title, placement ghost, and tower rendering (elevated towers get a dashed halo).
