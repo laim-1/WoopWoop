@@ -67,15 +67,15 @@ the game status line, confirm the live rules match the file below.
     "rooms": {
       "lobby": {
         "players": {
+          ".read": "auth != null",
           "$playerId": {
-            ".read": "auth != null",
             ".write": "auth != null && auth.uid === $playerId"
           }
         },
         "queues": {
           "$mode": {
+            ".read": "auth != null",
             "$playerId": {
-              ".read": "auth != null",
               ".write": "auth != null && auth.uid === $playerId"
             }
           }
