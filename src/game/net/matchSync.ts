@@ -84,12 +84,24 @@ export function createMatchSync(matchId: string, options: MatchSyncOptions): Mat
   let localEvents: MatchInputEvent[] = [];
   let lastTickAt = Date.now();
   let hostAccumulator = 0;
+  // Track whether we've ever seen the host's presence record. Without this,
+  // a slow initial presence write makes the partner think the host is gone
+  // and claim hostship, producing two hosts writing conflicting state.
+  let hostPresenceSeen = isHost;
 
   const unsubRoom = onValue(root, (snapshot) => {
     const value = snapshot.val() as MatchRoomSnapshot | null;
     const meta = value?.meta;
     const presence = value?.presence ?? {};
-    if (meta?.hostId && !presence[meta.hostId] && meta.playerIds.includes(localPlayerId)) {
+    if (meta?.hostId && presence[meta.hostId]) {
+      hostPresenceSeen = true;
+    }
+    if (
+      hostPresenceSeen
+      && meta?.hostId
+      && !presence[meta.hostId]
+      && meta.playerIds.includes(localPlayerId)
+    ) {
       const nextHost = [...meta.playerIds].find((id) => presence[id]) ?? localPlayerId;
       if (nextHost === localPlayerId && meta.hostId !== localPlayerId) {
         void set(metaRef, { ...meta, hostId: localPlayerId });
