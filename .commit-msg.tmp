@@ -1,6 +1,0 @@
-Make decorations sparser and bigger
-
-- Forest, desert, volcano now place decorations on ~20% of free tiles (was ~50-70%) and the trees / cacti / dead trees / lava pools span more than a single tile.
-- Moon goes from 22 small craters to 8 big ones (radius 58-88) with sparse boulders, so the lunar plain reads as wide open with a few crater rims that genuinely block sight lines.
-- City switches from one building per tile to ~26 multi-tile buildings (mostly 2x2, some 2x1 / 1x2 / 3x2). Streets and plazas are now genuinely open, and the remaining open tiles get a sparse scatter of bigger cars (80x40) and street lights.
-- Solid radii rebalanced so the larger visuals don't gate placement too aggressively (trees 0.5x size, cacti 0.45x, lava 0.88x, craters 0.92x).
