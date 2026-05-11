@@ -6,7 +6,8 @@ The current build is an early tower defense prototype:
 
 - Players sign in with Firebase email/password, or use offline mode when Firebase
   config is missing.
-- Players can walk around the main lobby with WASD.
+- Players can walk around the main lobby with WASD (or a touch joystick on
+  phones).
 - The lobby has queue boxes for **Single Player** and **Duos**.
 - Single player starts a tower defense test round.
 - Duos start once two players are waiting in the duo queue.
@@ -17,6 +18,121 @@ The current build is an early tower defense prototype:
 - Towers automatically target enemies in range, damage them, and kills award
   money for more towers.
 - The round is lost when base HP reaches 0.
+
+## Working on WoopWoop (notes for AI agents and contributors)
+
+Read this section before making changes. It explains the owner's working style,
+the project workflow, and the mechanics each part of the codebase covers so you
+can land changes without breaking sync.
+
+### Talking to the owner
+
+- Keep instructions **short, numbered, and action-oriented**. The owner doesn't
+  want long explanations unless they ask for them.
+- The owner copies database rules from this README. If you change rules, your
+  reply should always end with one line:
+  - **"Republish the rules from the README."** if rules changed.
+  - **"No rule changes needed."** otherwise.
+- Don't ask "should I do X?" unless there is a real branching decision. Default
+  to making the change and pushing.
+- The owner plays the deployed GitHub Pages build, not the local dev server, so
+  every change has to be pushed to `main` to be tested.
+
+### Standard workflow for any change
+
+1. Make the code changes.
+2. Run `npm run build` (or at least `tsc`) to make sure it compiles.
+3. Run `npm test -- --run` if you touched anything in `src/game/`.
+4. Commit and `git push origin main`. The owner does not want a feature branch
+   or PR unless they ask for one.
+5. GitHub Actions (`.github/workflows/deploy-pages.yml`) auto-deploys `main` to
+   `https://laim-1.github.io/WoopWoop/`. The login screen shows the deployed
+   commit SHA (see *Build info banner* below) so the owner can confirm.
+6. If rules changed, tell the owner exactly: "Republish the rules from the
+   README."
+
+### Mechanic inventory (what lives where)
+
+| Area | Files | What it does |
+| --- | --- | --- |
+| App shell / DOM bootstrap | `src/main.ts` (top of file) | Builds the HTML for the menu, HUD, lobby panel, canvas, touch controls, orientation overlay, and build-info card. |
+| Firebase init | `src/firebase.ts` | Reads `VITE_FIREBASE_*` env vars. Exports `auth`, `database`, and `isFirebaseConfigured`. Falls back to a placeholder config so the app shell still loads when env vars are missing (offline mode). |
+| Lobby world + players | `src/main.ts` (`updateLocalPlayer`, `subscribeToPlayers`, `syncLocalPlayer`) | Movement, camera follow, presence sync at `rooms/lobby/players/$uid` every `SYNC_INTERVAL_MS`. Players are filtered by scene + matchId before rendering so duo pairs don't see each other. |
+| Queueing | `src/main.ts` (`enterQueue`, `leaveQueue`, `resolveDuoQueue`, queue subscriptions) | Single/duo portals are physical boxes in the lobby. Walking inside writes to `rooms/lobby/queues/$mode/$uid`. `resolveDuoQueue` sorts by `queuedAt` then UID, pairs every two entries, and triggers `startMatch("duo", [a, b])`. |
+| Match lifecycle | `src/main.ts` (`startMatch`, `returnToLobby`, `coerceMatchStateFromRemote`) | Builds the deterministic `matchId` (`duo-<sortedUids>`), picks the host (lowest UID), creates the RTDB room, attaches `matchSync`, and tears it down on return. |
+| Multiplayer sync | `src/game/net/matchSync.ts` | The host runs the simulation in a 50 ms `setInterval`, applies queued input events, and writes `state` + `playerState` to RTDB via a multi-path `update`. Non-hosts mirror RTDB snapshots via `onValue`. |
+| Pure simulation | `src/game/simulation.ts` | Stateless reducers and tick advance. Used by both offline mode and the multiplayer host. Has Vitest coverage in `simulation.test.ts`. |
+| Towers, enemies, path | `src/game/constants.ts`, `src/game/types.ts` | Map geometry, base/path tiles, tower specs (cost / range / damage / etc.), enemy templates. |
+| Tower placement, shop, wave button | `src/main.ts` (`placeSelectedTower`, `pointerHitsTowerShopPanel`, `requestStartWave`, `drawTowerDefenseHud`) | Locally validates placement, submits a `placeTower` event in duo (or mutates state directly in single/offline). |
+| Mobile / touch controls | `src/main.ts` (joystick + sprint handlers, `isTouchDevice`), `src/styles.css` (`.touch-joystick`, `.touch-sprint`, `.orientation-lock`) | Bottom-left analog stick, bottom-right sprint button, portrait-only overlay on phones. Detected via `(pointer: coarse)`. |
+| Build info banner | `vite.config.ts`, `src/main.ts` (`renderBuildInfo`), `src/styles.css` (`.build-info`) | Injects `__BUILD_INFO__` (short SHA, commit subject, ISO date) at build time. Shown top-right of the login screen so the owner can verify the deploy. |
+| Stale match cleanup | `src/main.ts` (`cleanupStaleMatches`) + RTDB rule on `rooms/matches/$matchId` | Anyone joining the lobby scans `rooms/matches`, removes anything with `meta.createdAt` older than 4 hours. Rule allows the host to delete their own match any time. |
+| Deploy | `.github/workflows/deploy-pages.yml` | Push to `main` builds with the Firebase secrets and publishes to GitHub Pages. |
+
+### How duo multiplayer actually syncs (read before touching matchSync)
+
+1. Both clients call `startMatch("duo", [uidA, uidB])` from `resolveDuoQueue`.
+2. Both sort the UIDs to derive the same `matchId` and the same `hostId`
+   (alphabetically lowest UID is host; this is **deterministic on purpose** —
+   don't switch to "first to queue" without solving the queuedAt placeholder
+   race for the writer).
+3. Only the host calls `ensureMatchRoom`, which uses a **multi-path `update`**
+   (not `set`) to create `meta`, `state`, and `playerState`. RTDB rules don't
+   cascade upward, so a `set` at the match root would be denied.
+4. Both clients call `createMatchSync`. It:
+   - Subscribes to the match root (`onValue` on `rooms/matches/$matchId`).
+   - Writes presence at `presence/$uid` and registers `onDisconnect` cleanup.
+   - Subscribes to `events` (host-side only).
+   - Starts the 50 ms host tick.
+5. Non-host events (place tower, start wave, switch tower) are written to
+   `events/<push key>`. Host reads them, applies them in the next tick, then
+   removes only the keys it processed via a multi-path `update({ "events/key": null })`.
+6. Host failover only triggers **after** the partner has seen the host's
+   presence at least once (see `hostPresenceSeen`). Without this guard you get
+   a dual-host race where each client overwrites the other's state every 50 ms.
+
+### Realtime Database rules — the easy way to get them wrong
+
+- Rules **only cascade downward**. If you want to list children at a path, you
+  need `.read` at that path, not on the child wildcard. We learned this the
+  hard way with `rooms/lobby/queues/$mode` and `rooms/matches`.
+- `set()` at a parent path needs `.write` at or above that path. Child rules
+  do NOT grant access for a parent `set`. If you need child-rule semantics,
+  use `update()` instead.
+- `data` / `root` see the database **before** the write. `newData` sees the
+  merged result of the write. For rules that need to validate cross-sibling
+  values during a creation, use `newData.parent()`.
+- RTDB strips `null`, `undefined`, empty objects, and empty arrays. Don't
+  validate on optional empty children — see the relaxed `startRound` rule in
+  this file. Always assume those keys may be missing in snapshots.
+- Don't add `.validate` to `state` or `playerState` unless you want to chase
+  spec mismatches every time the schema evolves.
+
+### Common pitfalls
+
+- **`PERMISSION_DENIED` after a code change**: the rules and the live database
+  drifted. The READme block is the source of truth — paste it into Firebase
+  Console → Realtime Database → Rules → Publish.
+- **Partner sees outdated state**: usually means dual-host race (failover fired
+  too early) or the host's writes are failing silently. Add a `.then()` /
+  `.catch()` to `update(root, ...)` calls when debugging.
+- **Tower placement works but enemies don't**: the place-tower event applies
+  immediately, but the host's subsequent state writes may be denied. Confirm
+  the `state` rule allows the host (look for the `newData.parent()` form).
+- **Local dev shows wrong commit SHA**: `vite.config.ts` shells out to `git`
+  at build time. Inside a CI image without `.git`, the fallback is `"dev"`.
+  GitHub Actions does `actions/checkout@v4` so the SHA shows up correctly in
+  production.
+- **Adding a new RTDB path**: also add a `.read` rule at that path's listable
+  parent if anyone subscribes there, and update `database.rules.json` AND the
+  README block. Both files must stay in sync.
+
+### Where the owner plays
+
+- Production: `https://laim-1.github.io/WoopWoop/`
+- The login screen's top-right "Latest update" card shows the deployed commit
+  SHA, subject, and timestamp. Always glance at it after a push to confirm the
+  deploy made it before reporting that something is fixed.
 
 ## What you need from Firebase
 
